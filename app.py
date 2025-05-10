@@ -25,6 +25,14 @@ PORT = 8501
 DOWNLOAD_DIR = "downloads"
 BROADCAST_INTERVAL = 10
 
+# Initialize session state for active connections and file refresh
+if 'active_connections' not in st.session_state:
+    st.session_state.active_connections = {}
+if 'last_file_count' not in st.session_state:
+    st.session_state.last_file_count = 0
+if 'new_file_received' not in st.session_state:
+    st.session_state.new_file_received = None
+
 # Create Flask app for handling file uploads
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE
@@ -41,6 +49,10 @@ def upload_file():
         # Save the file to the downloads directory
         file_path = os.path.join(DOWNLOAD_DIR, file.filename)
         file.save(file_path)
+        # Update the last file count to trigger a refresh
+        st.session_state.last_file_count = len(os.listdir(DOWNLOAD_DIR))
+        # Set the new file received flag
+        st.session_state.new_file_received = file.filename
         return jsonify({'message': 'File uploaded successfully'}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -108,10 +120,6 @@ def create_directories():
         st.error(f"Error creating directory {DOWNLOAD_DIR}: {str(e)}")
 
 create_directories()
-
-# Initialize session state for active connections if not exists
-if 'active_connections' not in st.session_state:
-    st.session_state.active_connections = {}
 
 def get_local_ip():
     """Get the local IP address of the machine."""
@@ -353,7 +361,6 @@ class FileHandler(FileSystemEventHandler):
         if not event.is_directory:
             file_path = event.src_path
             if file_path.startswith(os.path.abspath(DOWNLOAD_DIR)):
-                st.toast(f"New file received: {os.path.basename(file_path)}")
                 open_file_with_default_app(file_path)
 
 def start_file_watcher():
@@ -421,6 +428,11 @@ def main():
     local_ip = get_local_ip()
     st.info(f"Your local IP address: {local_ip}")
     st.info(f"Platform: {platform.system()} {platform.release()}")
+    
+    # Check for new file and show toast notification
+    if st.session_state.new_file_received:
+        st.toast(f"New file received: {st.session_state.new_file_received}")
+        st.session_state.new_file_received = None
     
     # Perform initial scan if not done yet
     if 'initial_scan_done' not in st.session_state:
@@ -496,8 +508,15 @@ def main():
     else:
         st.info("No other devices connected. Start the app on other devices to enable file sharing.")
     
-    # Display received files
+    # Display received files with auto-refresh
     st.header("Received Files")
+    
+    # Check if the number of files has changed
+    current_file_count = len(os.listdir(DOWNLOAD_DIR))
+    if current_file_count != st.session_state.last_file_count:
+        st.session_state.last_file_count = current_file_count
+        st.rerun()  # This will refresh the page
+    
     files = os.listdir(DOWNLOAD_DIR)
     if files:
         for file in files:
