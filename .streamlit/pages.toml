@@ -1,0 +1,9 @@
+[[pages]]
+name = "Home"
+path = "app.py"
+icon = "🏠"
+
+[[pages]]
+name = "Connected Devices"
+path = "pages/connected_devices.py"
+icon = "📱" 
