@@ -20,7 +20,7 @@ from flask import Flask, request, jsonify
 
 # Constants
 UPLOAD_FOLDER = "shared_files"
-RECEIVED_FOLDER = "received_files"
+RECEIVED_FOLDER = "downloads"
 MAX_FILE_SIZE = 200 * 1024 * 1024  # 200MB max file size
 PORT = 8501
 DOWNLOAD_DIR = "downloads"
@@ -39,8 +39,8 @@ def upload_file():
         return jsonify({'error': 'No selected file'}), 400
     
     try:
-        # Save the file
-        file_path = os.path.join(RECEIVED_FOLDER, file.filename)
+        # Save the file to the downloads directory
+        file_path = os.path.join(DOWNLOAD_DIR, file.filename)
         file.save(file_path)
         return jsonify({'message': 'File uploaded successfully'}), 200
     except Exception as e:
@@ -354,15 +354,15 @@ class FileHandler(FileSystemEventHandler):
     def on_created(self, event):
         if not event.is_directory:
             file_path = event.src_path
-            if file_path.startswith(os.path.abspath(RECEIVED_FOLDER)):
+            if file_path.startswith(os.path.abspath(DOWNLOAD_DIR)):
                 st.toast(f"New file received: {os.path.basename(file_path)}")
                 open_file_with_default_app(file_path)
 
 def start_file_watcher():
-    """Start watching the received files directory for new files."""
+    """Start watching the downloads directory for new files."""
     event_handler = FileHandler()
     observer = Observer()
-    observer.schedule(event_handler, RECEIVED_FOLDER, recursive=False)
+    observer.schedule(event_handler, DOWNLOAD_DIR, recursive=False)
     observer.start()
     return observer
 
