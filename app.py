@@ -32,6 +32,8 @@ if 'last_file_count' not in st.session_state:
     st.session_state.last_file_count = 0
 if 'new_file_received' not in st.session_state:
     st.session_state.new_file_received = None
+if 'last_received_file' not in st.session_state:
+    st.session_state.last_received_file = None
 
 # Create Flask app for handling file uploads
 app = Flask(__name__)
@@ -49,10 +51,12 @@ def upload_file():
         # Save the file to the downloads directory
         file_path = os.path.join(DOWNLOAD_DIR, file.filename)
         file.save(file_path)
-        # Update the last file count to trigger a refresh
-        st.session_state.last_file_count = len(os.listdir(DOWNLOAD_DIR))
-        # Set the new file received flag
-        st.session_state.new_file_received = file.filename
+        
+        # Create a notification file to trigger the Streamlit app
+        notification_file = os.path.join(DOWNLOAD_DIR, f".notification_{file.filename}")
+        with open(notification_file, 'w') as f:
+            f.write(file.filename)
+        
         return jsonify({'message': 'File uploaded successfully'}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -361,7 +365,19 @@ class FileHandler(FileSystemEventHandler):
         if not event.is_directory:
             file_path = event.src_path
             if file_path.startswith(os.path.abspath(DOWNLOAD_DIR)):
-                open_file_with_default_app(file_path)
+                # Check if this is a notification file
+                if file_path.endswith('.notification'):
+                    try:
+                        with open(file_path, 'r') as f:
+                            received_file = f.read().strip()
+                        st.session_state.last_received_file = received_file
+                        # Delete the notification file
+                        os.remove(file_path)
+                    except:
+                        pass
+                else:
+                    # This is a regular file, open it
+                    open_file_with_default_app(file_path)
 
 def start_file_watcher():
     """Start watching the downloads directory for new files."""
@@ -430,9 +446,10 @@ def main():
     st.info(f"Platform: {platform.system()} {platform.release()}")
     
     # Check for new file and show toast notification
-    if st.session_state.new_file_received:
-        st.toast(f"New file received: {st.session_state.new_file_received}")
-        st.session_state.new_file_received = None
+    if st.session_state.last_received_file:
+        st.toast(f"New file received: {st.session_state.last_received_file}")
+        st.session_state.last_received_file = None
+        st.rerun()  # Force a refresh to update the file list
     
     # Perform initial scan if not done yet
     if 'initial_scan_done' not in st.session_state:
