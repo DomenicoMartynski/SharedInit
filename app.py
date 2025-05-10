@@ -14,6 +14,8 @@ import requests
 import json
 from datetime import datetime
 import queue
+import ipaddress
+import concurrent.futures
 
 # Constants
 UPLOAD_FOLDER = "shared_files"
@@ -22,6 +24,49 @@ MAX_FILE_SIZE = 200 * 1024 * 1024  # 200MB max file size
 PORT = 8501
 DOWNLOAD_DIR = "downloads"
 BROADCAST_INTERVAL = 10
+
+# Configure Streamlit page
+st.set_page_config(
+    page_title="LAN File Sharing App",
+    page_icon="📁",
+    layout="wide"
+)
+
+# Add custom headers to Streamlit
+st.markdown(
+    f"""
+    <script>
+        // Add platform information to headers
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', window.location.href);
+        xhr.setRequestHeader('X-Platform', '{platform.system()}');
+        xhr.setRequestHeader('X-Hostname', '{socket.gethostname()}');
+        xhr.setRequestHeader('X-Platform-Version', '{platform.release()}');
+        xhr.setRequestHeader('X-Platform-Machine', '{platform.machine()}');
+        xhr.send();
+    </script>
+    """,
+    unsafe_allow_html=True
+)
+
+# Add platform info to response headers
+def add_platform_headers():
+    """Add platform information to response headers."""
+    st.markdown(
+        f"""
+        <script>
+            // Add platform information to response headers
+            const xhr = new XMLHttpRequest();
+            xhr.open('GET', window.location.href);
+            xhr.setRequestHeader('X-Platform', '{platform.system()}');
+            xhr.setRequestHeader('X-Hostname', '{socket.gethostname()}');
+            xhr.setRequestHeader('X-Platform-Version', '{platform.release()}');
+            xhr.setRequestHeader('X-Platform-Machine', '{platform.machine()}');
+            xhr.send();
+        </script>
+        """,
+        unsafe_allow_html=True
+    )
 
 # Create necessary directories with proper permissions
 def create_directories():
@@ -37,13 +82,6 @@ def create_directories():
 
 create_directories()
 
-# Configure Streamlit page
-st.set_page_config(
-    page_title="LAN File Sharing App",
-    page_icon="📁",
-    layout="wide"
-)
-
 # Initialize session state for active connections if not exists
 if 'active_connections' not in st.session_state:
     st.session_state.active_connections = {}
@@ -51,23 +89,135 @@ if 'active_connections' not in st.session_state:
 def get_local_ip():
     """Get the local IP address of the machine."""
     try:
-        # Platform-specific IP detection
-        if platform.system() == 'Windows':
-            # Windows-specific method
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            local_ip = s.getsockname()[0]
-            s.close()
-        else:
-            # Unix-based systems (macOS and Linux)
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            local_ip = s.getsockname()[0]
-            s.close()
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
         return local_ip
     except Exception as e:
         st.warning(f"Could not determine local IP: {str(e)}")
         return "127.0.0.1"
+
+def get_network_range():
+    """Get the network range based on local IP."""
+    local_ip = get_local_ip()
+    ip_parts = local_ip.split('.')
+    return f"{ip_parts[0]}.{ip_parts[1]}.{ip_parts[2]}.0/24"
+
+def check_app_instance(ip):
+    """Check if a host is running our Streamlit app."""
+    try:
+        # Try to connect to the Streamlit port
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(0.5)  # 500ms timeout for each connection attempt
+        result = sock.connect_ex((ip, PORT))
+        sock.close()
+        
+        if result == 0:
+            # Try multiple methods to get hostname
+            hostname = None
+            try:
+                # Method 1: Try reverse DNS lookup
+                hostname = socket.gethostbyaddr(ip)[0]
+            except:
+                try:
+                    # Method 2: Try to get hostname from the device
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(0.5)
+                    sock.connect((ip, PORT))
+                    sock.send(b"GET /_stcore/stream HTTP/1.1\r\nHost: " + ip.encode() + b"\r\n\r\n")
+                    response = sock.recv(1024).decode()
+                    sock.close()
+                    
+                    # Look for hostname in response headers
+                    for line in response.split('\n'):
+                        if 'X-Hostname:' in line:
+                            hostname = line.split('X-Hostname:')[1].strip()
+                            break
+                except:
+                    pass
+            
+            # If hostname is still None, use IP as hostname
+            if not hostname:
+                hostname = ip
+            
+            # Try to detect platform
+            platform_type = "Unknown"
+            try:
+                # Try multiple endpoints to get platform info
+                endpoints = [
+                    f"http://{ip}:{PORT}/_stcore/health",
+                    f"http://{ip}:{PORT}/_stcore/stream",
+                    f"http://{ip}:{PORT}"
+                ]
+                
+                for endpoint in endpoints:
+                    try:
+                        response = requests.get(endpoint, timeout=0.5)
+                        if response.status_code == 200:
+                            # Check all possible platform headers
+                            platform_type = (
+                                response.headers.get('X-Platform') or
+                                response.headers.get('X-Platform-Version') or
+                                response.headers.get('X-Platform-Machine') or
+                                'Unknown'
+                            )
+                            if platform_type != 'Unknown':
+                                break
+                    except:
+                        continue
+                
+                # If still unknown, try to detect from hostname
+                if platform_type == "Unknown":
+                    try:
+                        # Try to detect platform from hostname patterns
+                        hostname_lower = hostname.lower()
+                        if 'mac' in hostname_lower or 'darwin' in hostname_lower:
+                            platform_type = "Darwin"
+                        elif 'win' in hostname_lower:
+                            platform_type = "Windows"
+                        elif 'linux' in hostname_lower:
+                            platform_type = "Linux"
+                    except:
+                        pass
+            except:
+                pass
+            
+            return {
+                "ip": ip,
+                "hostname": hostname,
+                "status": "Online",
+                "last_seen": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "platform": platform_type
+            }
+    except:
+        pass
+    return None
+
+def scan_network():
+    """Scan the network for other instances of our app."""
+    network = ipaddress.ip_network(get_network_range())
+    active_hosts = []
+    
+    # Get local IP to exclude it from scanning
+    local_ip = get_local_ip()
+    
+    # Get list of IPs to scan (excluding local IP)
+    ips_to_scan = [str(ip) for ip in network.hosts() if str(ip) != local_ip]
+    total_ips = len(ips_to_scan)
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+        future_to_ip = {
+            executor.submit(check_app_instance, ip): ip 
+            for ip in ips_to_scan
+        }
+        
+        for future in concurrent.futures.as_completed(future_to_ip):
+            result = future.result()
+            if result:
+                active_hosts.append(result)
+    
+    return active_hosts
 
 def open_file_with_default_app(file_path):
     """Open a file with the default application based on the operating system."""
@@ -228,6 +378,15 @@ def main():
     local_ip = get_local_ip()
     st.info(f"Your local IP address: {local_ip}")
     st.info(f"Platform: {platform.system()} {platform.release()}")
+    
+    # Perform initial scan if not done yet
+    if 'initial_scan_done' not in st.session_state:
+        with st.spinner("Performing initial network scan..."):
+            active_hosts = scan_network()
+            st.session_state.active_connections = {
+                host['ip']: host for host in active_hosts
+            }
+            st.session_state.initial_scan_done = True
     
     # Start background tasks
     start_background_tasks()
