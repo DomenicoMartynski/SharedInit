@@ -20,7 +20,6 @@ from flask import Flask, request, jsonify
 
 # Constants
 UPLOAD_FOLDER = "shared_files"
-RECEIVED_FOLDER = "downloads"
 MAX_FILE_SIZE = 200 * 1024 * 1024  # 200MB max file size
 PORT = 8501
 DOWNLOAD_DIR = "downloads"
@@ -100,14 +99,13 @@ def add_platform_headers():
 # Create necessary directories with proper permissions
 def create_directories():
     """Create directories with proper permissions for each platform."""
-    for folder in [UPLOAD_FOLDER, RECEIVED_FOLDER]:
-        try:
-            os.makedirs(folder, exist_ok=True)
-            # Set proper permissions based on platform
-            if platform.system() != 'Windows':
-                os.chmod(folder, 0o755)  # rwxr-xr-x
-        except Exception as e:
-            st.error(f"Error creating directory {folder}: {str(e)}")
+    try:
+        os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+        # Set proper permissions based on platform
+        if platform.system() != 'Windows':
+            os.chmod(DOWNLOAD_DIR, 0o755)  # rwxr-xr-x
+    except Exception as e:
+        st.error(f"Error creating directory {DOWNLOAD_DIR}: {str(e)}")
 
 create_directories()
 
