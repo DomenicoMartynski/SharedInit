@@ -9,15 +9,26 @@ import time
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import mimetypes
+import shutil
 
 # Constants
 UPLOAD_FOLDER = "shared_files"
 RECEIVED_FOLDER = "received_files"
 MAX_FILE_SIZE = 200 * 1024 * 1024  # 200MB max file size
 
-# Create necessary directories
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(RECEIVED_FOLDER, exist_ok=True)
+# Create necessary directories with proper permissions
+def create_directories():
+    """Create directories with proper permissions for each platform."""
+    for folder in [UPLOAD_FOLDER, RECEIVED_FOLDER]:
+        try:
+            os.makedirs(folder, exist_ok=True)
+            # Set proper permissions based on platform
+            if platform.system() != 'Windows':
+                os.chmod(folder, 0o755)  # rwxr-xr-x
+        except Exception as e:
+            st.error(f"Error creating directory {folder}: {str(e)}")
+
+create_directories()
 
 # Configure Streamlit page
 st.set_page_config(
@@ -29,13 +40,22 @@ st.set_page_config(
 def get_local_ip():
     """Get the local IP address of the machine."""
     try:
-        # Create a socket to get the local IP
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        local_ip = s.getsockname()[0]
-        s.close()
+        # Platform-specific IP detection
+        if platform.system() == 'Windows':
+            # Windows-specific method
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+        else:
+            # Unix-based systems (macOS and Linux)
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+            s.close()
         return local_ip
-    except Exception:
+    except Exception as e:
+        st.warning(f"Could not determine local IP: {str(e)}")
         return "127.0.0.1"
 
 def open_file_with_default_app(file_path):
@@ -49,6 +69,25 @@ def open_file_with_default_app(file_path):
             subprocess.run(['xdg-open', file_path])
     except Exception as e:
         st.error(f"Error opening file: {str(e)}")
+
+def get_file_mime_type(file_path):
+    """Get the MIME type of a file, with platform-specific handling."""
+    mime_type, _ = mimetypes.guess_type(file_path)
+    if mime_type is None:
+        # Platform-specific MIME type detection
+        if platform.system() == 'Darwin':  # macOS
+            try:
+                output = subprocess.check_output(['file', '--mime-type', file_path]).decode()
+                mime_type = output.split(':')[-1].strip()
+            except:
+                pass
+        elif platform.system() == 'Linux':
+            try:
+                output = subprocess.check_output(['file', '--mime-type', file_path]).decode()
+                mime_type = output.split(':')[-1].strip()
+            except:
+                pass
+    return mime_type or 'application/octet-stream'
 
 class FileHandler(FileSystemEventHandler):
     def on_created(self, event):
@@ -77,9 +116,10 @@ def get_file_extension(filename):
 def main():
     st.title("LAN File Sharing App")
     
-    # Display local IP address
+    # Display local IP address and platform
     local_ip = get_local_ip()
     st.info(f"Your local IP address: {local_ip}")
+    st.info(f"Platform: {platform.system()} {platform.release()}")
     
     # File upload section
     st.header("Upload File")
@@ -116,6 +156,11 @@ def main():
             file_path = os.path.join(UPLOAD_FOLDER, uploaded_file.name)
             with open(file_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
+            
+            # Set proper file permissions
+            if platform.system() != 'Windows':
+                os.chmod(file_path, 0o644)  # rw-r--r--
+            
             st.success(f"File uploaded successfully: {uploaded_file.name}")
             
             # Clear the file uploader
@@ -143,7 +188,7 @@ def main():
                                 data=f,
                                 file_name=file,
                                 key=f"download_btn_{file}",
-                                mime=mimetypes.guess_type(file)[0]
+                                mime=get_file_mime_type(file_path)
                             )
                     except Exception as e:
                         st.error(f"Error downloading file: {str(e)}")
