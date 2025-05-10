@@ -36,6 +36,7 @@ if 'last_received_file' not in st.session_state:
 # Create Flask app for handling file uploads
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE
+app.config['UPLOAD_FOLDER'] = DOWNLOAD_DIR  # Set the upload folder to DOWNLOAD_DIR
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -49,14 +50,18 @@ def upload_file():
         # Ensure downloads directory exists
         if not os.path.exists(DOWNLOAD_DIR):
             os.makedirs(DOWNLOAD_DIR)
+            print(f"Created directory: {os.path.abspath(DOWNLOAD_DIR)}")
             
         # Save the file to the downloads directory
         file_path = os.path.join(DOWNLOAD_DIR, file.filename)
+        print(f"Attempting to save file to: {os.path.abspath(file_path)}")
         file.save(file_path)
+        print(f"Successfully saved file to: {os.path.abspath(file_path)}")
         return jsonify({'message': 'File uploaded successfully'}), 200
     except Exception as e:
         # Log the full error for debugging
         print(f"Error saving file: {str(e)}")
+        print(f"Current working directory: {os.getcwd()}")
         print(f"Attempted to save to: {os.path.abspath(file_path)}")
         return jsonify({'error': f"Failed to save file: {str(e)}"}), 500
 
