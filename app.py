@@ -32,6 +32,8 @@ if 'last_file_count' not in st.session_state:
     st.session_state.last_file_count = 0
 if 'last_received_file' not in st.session_state:
     st.session_state.last_received_file = None
+if 'current_session_files' not in st.session_state:
+    st.session_state.current_session_files = set()
 
 # Create Flask app for handling file uploads
 app = Flask(__name__)
@@ -371,6 +373,8 @@ class FileHandler(FileSystemEventHandler):
             if file_path.startswith(os.path.abspath(DOWNLOAD_DIR)):
                 # Update the last received file
                 st.session_state.last_received_file = os.path.basename(file_path)
+                # Add to current session files
+                st.session_state.current_session_files.add(os.path.basename(file_path))
                 # Open the file
                 open_file_with_default_app(file_path)
 
@@ -431,6 +435,20 @@ def broadcast_file(file_path):
         st.success(f"Successfully sent file to all {total_devices} devices!")
     else:
         st.warning(f"Sent file to {success_count} out of {total_devices} devices.")
+
+def delete_file(file_path):
+    """Delete a file and remove it from session state if it exists."""
+    try:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            # Remove from current session files if it exists there
+            filename = os.path.basename(file_path)
+            if filename in st.session_state.current_session_files:
+                st.session_state.current_session_files.remove(filename)
+            return True
+    except Exception as e:
+        st.error(f"Error deleting file: {str(e)}")
+    return False
 
 def main():
     st.title("LAN File Sharing App")
@@ -528,7 +546,7 @@ def main():
         st.info("No other devices connected. Start the app on other devices to enable file sharing.")
     
     # Display received files with auto-refresh
-    st.header("Received Files")
+    st.header("Current Session Files")
     
     # Check if the number of files has changed
     current_file_count = len(os.listdir(DOWNLOAD_DIR))
@@ -537,17 +555,44 @@ def main():
         st.rerun()  # This will refresh the page
     
     files = os.listdir(DOWNLOAD_DIR)
-    if files:
-        for file in files:
+    current_session_files = [f for f in files if f in st.session_state.current_session_files]
+    historical_files = [f for f in files if f not in st.session_state.current_session_files]
+    
+    if current_session_files:
+        for file in current_session_files:
             file_path = os.path.join(DOWNLOAD_DIR, file)
-            col1, col2 = st.columns([3, 1])
+            col1, col2, col3 = st.columns([3, 1, 1])
             with col1:
                 st.write(file)
             with col2:
-                if st.button("Open", key=file):
+                if st.button("Open", key=f"current_{file}"):
                     open_file_with_default_app(file_path)
+            with col3:
+                if st.button("🗑️ Delete", key=f"delete_current_{file}"):
+                    if delete_file(file_path):
+                        st.success(f"Deleted {file}")
+                        st.rerun()
     else:
-        st.info("No files received yet.")
+        st.info("No files received in current session.")
+    
+    # Display historical files
+    with st.expander("Historical Files", expanded=False):
+        if historical_files:
+            for file in historical_files:
+                file_path = os.path.join(DOWNLOAD_DIR, file)
+                col1, col2, col3 = st.columns([3, 1, 1])
+                with col1:
+                    st.write(file)
+                with col2:
+                    if st.button("Open", key=f"historical_{file}"):
+                        open_file_with_default_app(file_path)
+                with col3:
+                    if st.button("🗑️ Delete", key=f"delete_historical_{file}"):
+                        if delete_file(file_path):
+                            st.success(f"Deleted {file}")
+                            st.rerun()
+        else:
+            st.info("No historical files found.")
     
     # Supported Applications Section - Concise Version (moved to end)
     st.markdown("---")
