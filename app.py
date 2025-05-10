@@ -10,11 +10,18 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import mimetypes
 import shutil
+import requests
+import json
+from datetime import datetime
+import queue
 
 # Constants
 UPLOAD_FOLDER = "shared_files"
 RECEIVED_FOLDER = "received_files"
 MAX_FILE_SIZE = 200 * 1024 * 1024  # 200MB max file size
+PORT = 8501
+DOWNLOAD_DIR = "downloads"
+BROADCAST_INTERVAL = 10
 
 # Create necessary directories with proper permissions
 def create_directories():
@@ -36,6 +43,10 @@ st.set_page_config(
     page_icon="📁",
     layout="wide"
 )
+
+# Initialize session state for active connections if not exists
+if 'active_connections' not in st.session_state:
+    st.session_state.active_connections = {}
 
 def get_local_ip():
     """Get the local IP address of the machine."""
@@ -89,6 +100,61 @@ def get_file_mime_type(file_path):
                 pass
     return mime_type or 'application/octet-stream'
 
+def broadcast_presence():
+    """Broadcast this app's presence to the network."""
+    while True:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            
+            message = {
+                'type': 'presence',
+                'ip': get_local_ip(),
+                'hostname': socket.gethostname(),
+                'platform': platform.system(),
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            sock.sendto(json.dumps(message).encode(), ('<broadcast>', PORT))
+            sock.close()
+            
+            time.sleep(BROADCAST_INTERVAL)
+        except Exception as e:
+            print(f"Broadcast error: {e}")
+            time.sleep(BROADCAST_INTERVAL)
+
+def listen_for_broadcasts():
+    """Listen for presence broadcasts from other instances."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(('', PORT))
+    
+    while True:
+        try:
+            data, addr = sock.recvfrom(1024)
+            message = json.loads(data.decode())
+            
+            if message['type'] == 'presence' and message['ip'] != get_local_ip():
+                st.session_state.active_connections[message['ip']] = {
+                    'ip': message['ip'],
+                    'hostname': message['hostname'],
+                    'platform': message['platform'],
+                    'last_seen': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    'status': 'Online'
+                }
+        except Exception as e:
+            print(f"Listen error: {e}")
+
+def start_background_tasks():
+    """Start background tasks for broadcasting and listening."""
+    if 'broadcast_thread' not in st.session_state:
+        st.session_state.broadcast_thread = threading.Thread(target=broadcast_presence, daemon=True)
+        st.session_state.broadcast_thread.start()
+    
+    if 'listen_thread' not in st.session_state:
+        st.session_state.listen_thread = threading.Thread(target=listen_for_broadcasts, daemon=True)
+        st.session_state.listen_thread.start()
+
 class FileHandler(FileSystemEventHandler):
     def on_created(self, event):
         if not event.is_directory:
@@ -113,6 +179,48 @@ def get_file_extension(filename):
     """Get the file extension from filename."""
     return os.path.splitext(filename)[1].lower()
 
+def send_file_to_device(file_path, device_ip):
+    """Send a file to a specific device."""
+    try:
+        url = f"http://{device_ip}:{PORT}/upload"
+        with open(file_path, 'rb') as f:
+            files = {'file': f}
+            response = requests.post(url, files=files)
+            if response.status_code == 200:
+                return True
+            else:
+                st.error(f"Failed to send file to {device_ip}: {response.text}")
+                return False
+    except Exception as e:
+        st.error(f"Error sending file to {device_ip}: {str(e)}")
+        return False
+
+def broadcast_file(file_path):
+    """Send a file to all connected devices."""
+    success_count = 0
+    total_devices = len(st.session_state.active_connections)
+    
+    if total_devices == 0:
+        st.warning("No devices connected to broadcast to.")
+        return
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    for i, (ip, device) in enumerate(st.session_state.active_connections.items()):
+        status_text.text(f"Sending to {device['hostname']} ({ip})...")
+        if send_file_to_device(file_path, ip):
+            success_count += 1
+        progress_bar.progress((i + 1) / total_devices)
+    
+    progress_bar.empty()
+    status_text.empty()
+    
+    if success_count == total_devices:
+        st.success(f"Successfully sent file to all {total_devices} devices!")
+    else:
+        st.warning(f"Sent file to {success_count} out of {total_devices} devices.")
+
 def main():
     st.title("LAN File Sharing App")
     
@@ -121,8 +229,15 @@ def main():
     st.info(f"Your local IP address: {local_ip}")
     st.info(f"Platform: {platform.system()} {platform.release()}")
     
+    # Start background tasks
+    start_background_tasks()
+    
+    # Create downloads directory if it doesn't exist
+    if not os.path.exists(DOWNLOAD_DIR):
+        os.makedirs(DOWNLOAD_DIR)
+    
     # File upload section
-    st.header("Upload File")
+    st.header("Send Files")
     
     # Define allowed file types
     allowed_types = [
@@ -132,7 +247,7 @@ def main():
     ]
     
     uploaded_file = st.file_uploader(
-        "Choose a file to share",
+        "Choose a file to send",
         type=allowed_types,
         accept_multiple_files=False,
         key="file_uploader"
@@ -153,47 +268,39 @@ def main():
                 return
 
             # Save the uploaded file
-            file_path = os.path.join(UPLOAD_FOLDER, uploaded_file.name)
+            file_path = os.path.join(DOWNLOAD_DIR, uploaded_file.name)
             with open(file_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
             
-            # Set proper file permissions
-            if platform.system() != 'Windows':
-                os.chmod(file_path, 0o644)  # rw-r--r--
-            
-            st.success(f"File uploaded successfully: {uploaded_file.name}")
-            
-            # Clear the file uploader
-            st.experimental_rerun()
+            # Broadcast the file to all connected devices
+            broadcast_file(file_path)
             
         except Exception as e:
             st.error(f"Error uploading file: {str(e)}")
             st.error("Please try again with a different file or check file permissions.")
     
-    # Display shared files
-    st.header("Shared Files")
-    shared_files = os.listdir(UPLOAD_FOLDER)
-    if shared_files:
-        for file in shared_files:
+    # Display connected devices
+    st.header("Connected Devices")
+    if st.session_state.active_connections:
+        for ip, device in st.session_state.active_connections.items():
+            st.write(f"📱 {device['hostname']} ({ip}) - {device['status']}")
+    else:
+        st.info("No other devices connected. Start the app on other devices to enable file sharing.")
+    
+    # Display received files
+    st.header("Received Files")
+    files = os.listdir(DOWNLOAD_DIR)
+    if files:
+        for file in files:
+            file_path = os.path.join(DOWNLOAD_DIR, file)
             col1, col2 = st.columns([3, 1])
             with col1:
                 st.write(file)
             with col2:
-                if st.button("Download", key=f"download_{file}"):
-                    file_path = os.path.join(UPLOAD_FOLDER, file)
-                    try:
-                        with open(file_path, "rb") as f:
-                            st.download_button(
-                                label="Click to download",
-                                data=f,
-                                file_name=file,
-                                key=f"download_btn_{file}",
-                                mime=get_file_mime_type(file_path)
-                            )
-                    except Exception as e:
-                        st.error(f"Error downloading file: {str(e)}")
+                if st.button("Open", key=file):
+                    open_file_with_default_app(file_path)
     else:
-        st.write("No files shared yet.")
+        st.info("No files received yet.")
 
 if __name__ == "__main__":
     # Start file watcher in a separate thread
