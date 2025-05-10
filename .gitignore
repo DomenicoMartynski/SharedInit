@@ -2,3 +2,5 @@
 shared_files/*
 received_files/*
 downloads/*
+.streamlit
+.DS_Store
