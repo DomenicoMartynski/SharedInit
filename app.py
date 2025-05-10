@@ -174,7 +174,7 @@ def check_app_instance(ip):
                         hostname_lower = hostname.lower()
                         if 'mac' in hostname_lower or 'darwin' in hostname_lower:
                             platform_type = "Darwin"
-                        elif 'win' in hostname_lower or 'windows' in hostname_lower:
+                        elif 'win' in hostname_lower or 'windows' in hostname_lower or 'pc' in hostname_lower:
                             platform_type = "Windows"
                         elif 'linux' in hostname_lower:
                             platform_type = "Linux"
@@ -186,7 +186,11 @@ def check_app_instance(ip):
                                 response = requests.get(f"http://{ip}:{PORT}/_stcore/stream", timeout=0.5)
                                 if response.status_code == 200:
                                     # Check for Windows-specific headers or patterns
-                                    if any(win_header in response.headers for win_header in ['X-Windows', 'X-Win32']):
+                                    if any(win_header in response.headers for win_header in ['X-Windows', 'X-Win32', 'X-Windows-NT']):
+                                        platform_type = "Windows"
+                                    # Check user agent for Windows
+                                    user_agent = response.headers.get('User-Agent', '').lower()
+                                    if 'windows' in user_agent or 'win32' in user_agent or 'win64' in user_agent:
                                         platform_type = "Windows"
                             except:
                                 pass
