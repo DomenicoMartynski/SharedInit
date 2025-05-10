@@ -46,12 +46,19 @@ def upload_file():
         return jsonify({'error': 'No selected file'}), 400
     
     try:
+        # Ensure downloads directory exists
+        if not os.path.exists(DOWNLOAD_DIR):
+            os.makedirs(DOWNLOAD_DIR)
+            
         # Save the file to the downloads directory
         file_path = os.path.join(DOWNLOAD_DIR, file.filename)
         file.save(file_path)
         return jsonify({'message': 'File uploaded successfully'}), 200
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        # Log the full error for debugging
+        print(f"Error saving file: {str(e)}")
+        print(f"Attempted to save to: {os.path.abspath(file_path)}")
+        return jsonify({'error': f"Failed to save file: {str(e)}"}), 500
 
 def start_flask_server():
     """Start the Flask server in a separate thread."""
