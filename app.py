@@ -167,17 +167,29 @@ def check_app_instance(ip):
                     except:
                         continue
                 
-                # If still unknown, try to detect from hostname
+                # If still unknown, try to detect from hostname and other methods
                 if platform_type == "Unknown":
                     try:
                         # Try to detect platform from hostname patterns
                         hostname_lower = hostname.lower()
                         if 'mac' in hostname_lower or 'darwin' in hostname_lower:
                             platform_type = "Darwin"
-                        elif 'win' in hostname_lower:
+                        elif 'win' in hostname_lower or 'windows' in hostname_lower:
                             platform_type = "Windows"
                         elif 'linux' in hostname_lower:
                             platform_type = "Linux"
+                        
+                        # Additional Windows detection
+                        if platform_type == "Unknown":
+                            try:
+                                # Try to get Windows-specific information
+                                response = requests.get(f"http://{ip}:{PORT}/_stcore/stream", timeout=0.5)
+                                if response.status_code == 200:
+                                    # Check for Windows-specific headers or patterns
+                                    if any(win_header in response.headers for win_header in ['X-Windows', 'X-Win32']):
+                                        platform_type = "Windows"
+                            except:
+                                pass
                     except:
                         pass
             except:
@@ -398,16 +410,23 @@ def main():
     # File upload section
     st.header("Send Files")
     
-    # Define allowed file types
-    allowed_types = [
-        "pdf", "doc", "docx", "txt", "jpg", "jpeg", "png", "gif",
-        "mp3", "mp4", "avi", "mov", "zip", "rar", "xlsx", "xls",
-        "ppt", "pptx", "csv"
-    ]
+    # Define allowed file types in a more user-friendly way
+    allowed_types = {
+        "Adobe Files": ["psd", "ai", "indd", "pdf", "prproj", "aep", "lrcat", "sesx"],
+        "Microsoft Office": ["doc", "docx", "xls", "xlsx", "ppt", "pptx", "pub", "vsd", "mdb", "accdb", "one"],
+        "Autodesk": ["dwg", "dxf", "rvt", "rfa", "max", "ma", "mb", "ipt", "iam", "f3d", "nwd"],
+        "Images": ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "svg", "webp", "ico", "raw", "cr2", "nef", "arw", "dng"],
+        "Media": ["mp4", "avi", "mov", "wmv", "flv", "mkv", "mp3", "wav", "ogg", "flac", "m4a", "aac", "wma"],
+        "Archives": ["zip", "rar", "7z", "tar", "gz", "bz2"],
+        "Documents": ["txt", "rtf", "csv", "json", "xml", "html", "htm", "css", "js", "py", "java", "cpp", "c", "h", "sql"]
+    }
+    
+    # Flatten the allowed types for the actual file uploader
+    all_extensions = [ext for extensions in allowed_types.values() for ext in extensions]
     
     uploaded_file = st.file_uploader(
         "Choose a file to send",
-        type=allowed_types,
+        type=all_extensions,
         accept_multiple_files=False,
         key="file_uploader"
     )
@@ -422,7 +441,7 @@ def main():
 
             # Get file extension
             file_extension = get_file_extension(uploaded_file.name)
-            if file_extension[1:] not in allowed_types:
+            if file_extension[1:] not in all_extensions:
                 st.error(f"File type {file_extension} is not allowed")
                 return
 
@@ -460,6 +479,33 @@ def main():
                     open_file_with_default_app(file_path)
     else:
         st.info("No files received yet.")
+    
+    # Supported Applications Section - Concise Version (moved to end)
+    st.markdown("---")
+    st.header("📚 Supported Applications")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("""
+        ### Main Applications
+        - 🎨 **Adobe Creative Suite** (Photoshop, Illustrator, InDesign, etc.)
+        - 💼 **Microsoft Office** (Word, Excel, PowerPoint, etc.)
+        - 🏗️ **Autodesk** (AutoCAD, Revit, 3ds Max, etc.)
+        """)
+    
+    with col2:
+        st.markdown("""
+        ### Other Formats
+        - 🖼️ **Images** (JPG, PNG, RAW, etc.)
+        - 🎥 **Media** (MP4, MP3, etc.)
+        - 📦 **Archives** (ZIP, RAR, etc.)
+        """)
+    
+    st.markdown("""
+    > 💡 For a complete list of supported formats and detailed documentation, 
+    > visit the [documentation](documentation) page.
+    """)
 
 if __name__ == "__main__":
     # Start file watcher in a separate thread
