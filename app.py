@@ -492,13 +492,16 @@ def main():
                 st.error(f"File type {file_extension} is not allowed")
                 return
 
-            # Save the uploaded file
-            file_path = os.path.join(DOWNLOAD_DIR, uploaded_file.name)
-            with open(file_path, "wb") as f:
+            # Save the uploaded file temporarily
+            temp_file_path = os.path.join(DOWNLOAD_DIR, uploaded_file.name)
+            with open(temp_file_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
             
             # Broadcast the file to all connected devices
-            broadcast_file(file_path)
+            broadcast_file(temp_file_path)
+            
+            # Remove the temporary file
+            os.remove(temp_file_path)
             
         except Exception as e:
             st.error(f"Error uploading file: {str(e)}")
