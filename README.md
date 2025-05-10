@@ -1,4 +1,7 @@
-#  SharedInit - LAN File Sharing App
+# SharedInit - LAN File Sharing App
+
+![SharedInit Logo](img/SharedInitlogo.png)
+
 An App created as part of the Engineer's Thesis. The App allows multiple Computers to connect to each other, share files and automatically opens the 
 default app bound to the extension of the sent file.
 A  Streamlit application that allows users to share files within a Local Area Network (LAN).

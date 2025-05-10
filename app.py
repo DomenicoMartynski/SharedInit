@@ -59,6 +59,12 @@ def upload_file():
         print(f"Attempting to save file to: {os.path.abspath(file_path)}")
         file.save(file_path)
         print(f"Successfully saved file to: {os.path.abspath(file_path)}")
+        
+        # Set the last received file in session state
+        with app.app_context():
+            st.session_state.last_received_file = file.filename
+            st.session_state.current_session_files.add(file.filename)
+        
         return jsonify({'message': 'File uploaded successfully'}), 200
     except Exception as e:
         # Log the full error for debugging
@@ -451,6 +457,11 @@ def delete_file(file_path):
     return False
 
 def main():
+    # Display logo
+    logo_path = os.path.join("img", "SharedInitlogo.png")
+    if os.path.exists(logo_path):
+        st.image(logo_path, width=300)
+    
     st.title("LAN File Sharing App")
     
     # Display local IP address and platform
