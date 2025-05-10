@@ -16,6 +16,7 @@ from datetime import datetime
 import queue
 import ipaddress
 import concurrent.futures
+from flask import Flask, request, jsonify
 
 # Constants
 UPLOAD_FOLDER = "shared_files"
@@ -24,6 +25,34 @@ MAX_FILE_SIZE = 200 * 1024 * 1024  # 200MB max file size
 PORT = 8501
 DOWNLOAD_DIR = "downloads"
 BROADCAST_INTERVAL = 10
+
+# Create Flask app for handling file uploads
+app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE
+
+@app.route('/upload', methods=['POST'])
+def upload_file():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part'}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
+    
+    try:
+        # Save the file
+        file_path = os.path.join(RECEIVED_FOLDER, file.filename)
+        file.save(file_path)
+        return jsonify({'message': 'File uploaded successfully'}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+def start_flask_server():
+    """Start the Flask server in a separate thread."""
+    app.run(host='0.0.0.0', port=PORT + 1, threaded=True)
+
+# Start Flask server in a separate thread
+flask_thread = threading.Thread(target=start_flask_server, daemon=True)
+flask_thread.start()
 
 # Configure Streamlit page
 st.set_page_config(
@@ -348,7 +377,7 @@ def get_file_extension(filename):
 def send_file_to_device(file_path, device_ip):
     """Send a file to a specific device."""
     try:
-        url = f"http://{device_ip}:{PORT}/upload"
+        url = f"http://{device_ip}:{PORT + 1}/upload"  # Use Flask server port
         with open(file_path, 'rb') as f:
             files = {'file': f}
             response = requests.post(url, files=files)
