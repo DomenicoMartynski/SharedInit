@@ -60,11 +60,6 @@ def upload_file():
         file.save(file_path)
         print(f"Successfully saved file to: {os.path.abspath(file_path)}")
         
-        # Set the last received file in session state
-        with app.app_context():
-            st.session_state.last_received_file = file.filename
-            st.session_state.current_session_files.add(file.filename)
-        
         return jsonify({'message': 'File uploaded successfully'}), 200
     except Exception as e:
         # Log the full error for debugging
@@ -380,6 +375,8 @@ class FileHandler(FileSystemEventHandler):
                 # Update the last received file
                 st.session_state.last_received_file = os.path.basename(file_path)
                 # Add to current session files
+                if 'current_session_files' not in st.session_state:
+                    st.session_state.current_session_files = set()
                 st.session_state.current_session_files.add(os.path.basename(file_path))
                 # Open the file
                 open_file_with_default_app(file_path)
