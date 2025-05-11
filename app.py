@@ -16,22 +16,27 @@ from datetime import datetime
 import queue
 import ipaddress
 import concurrent.futures
-from flask import Flask, request, jsonify
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Constants
-UPLOAD_FOLDER = "shared_files"
+UPLOAD_FOLDER = "downloads"
 MAX_FILE_SIZE = 200 * 1024 * 1024  # 200MB max file size
-PORT = 8501
-DOWNLOAD_DIR = "downloads"
+STREAMLIT_PORT = 8501
+FLASK_PORT = 8502
 BROADCAST_INTERVAL = 10
+EVENT_FILE = "file_events.json"
 
 # Create a thread-safe queue for communication
 connection_queue = queue.Queue()
 
-# Create a thread-safe queue for file events
-file_event_queue = queue.Queue()
-
-# Initialize session state for active connections and file refresh
+# Initialize session state
 if 'active_connections' not in st.session_state:
     st.session_state.active_connections = {}
 if 'last_file_count' not in st.session_state:
@@ -50,58 +55,54 @@ if 'last_deletion_status' not in st.session_state:
     st.session_state.last_deletion_status = None
 if 'last_deletion_time' not in st.session_state:
     st.session_state.last_deletion_time = None
+if 'last_event_check' not in st.session_state:
+    st.session_state.last_event_check = datetime.now()
 
-# Create Flask app for handling file uploads
-app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE
-app.config['UPLOAD_FOLDER'] = DOWNLOAD_DIR  # Set the upload folder to DOWNLOAD_DIR
-
-@app.route('/upload', methods=['POST'])
-def upload_file():
-    if 'file' not in request.files:
-        st.session_state.last_upload_status = {'error': 'No file part'}
-        st.session_state.last_upload_time = datetime.now()
-        return jsonify({'error': 'No file part'}), 400
-    file = request.files['file']
-    if file.filename == '':
-        st.session_state.last_upload_status = {'error': 'No selected file'}
-        st.session_state.last_upload_time = datetime.now()
-        return jsonify({'error': 'No selected file'}), 400
-    
+def check_file_events():
+    """Check for new file events."""
     try:
-        # Ensure downloads directory exists
-        if not os.path.exists(DOWNLOAD_DIR):
-            os.makedirs(DOWNLOAD_DIR)
-            print(f"Created directory: {os.path.abspath(DOWNLOAD_DIR)}")
+        if not os.path.exists(EVENT_FILE):
+            return
+        
+        # Read events
+        with open(EVENT_FILE, 'r') as f:
+            events = json.load(f)
+        
+        # Process new events
+        for event in events:
+            if event['type'] == 'file_received':
+                st.session_state.last_received_file = event['filename']
+                st.session_state.last_upload_status = {
+                    'success': f"File {event['filename']} received successfully"
+                }
+                st.session_state.last_upload_time = datetime.now()
+        
+        # Clear the event file
+        with open(EVENT_FILE, 'w') as f:
+            json.dump([], f)
             
-        # Save the file to the downloads directory
-        file_path = os.path.join(DOWNLOAD_DIR, file.filename)
-        print(f"Attempting to save file to: {os.path.abspath(file_path)}")
-        file.save(file_path)
-        print(f"Successfully saved file to: {os.path.abspath(file_path)}")
-        
-        # Notify main thread of file received
-        file_event_queue.put({'type': 'file_received', 'filename': file.filename})
-        
-        return jsonify({'message': 'File uploaded successfully'}), 200
     except Exception as e:
-        # Log the full error for debugging
-        print(f"Error saving file: {str(e)}")
-        print(f"Current working directory: {os.getcwd()}")
-        print(f"Attempted to save to: {os.path.abspath(file_path)}")
-        
-        # Update session state with error
-        st.session_state.last_upload_status = {'error': f"Failed to upload file: {str(e)}"}
-        st.session_state.last_upload_time = datetime.now()
-        
-        # Force a rerun to show the error
-        st.rerun()
-        
-        return jsonify({'error': f"Failed to upload file: {str(e)}"}), 500
+        logger.error(f"Error checking file events: {str(e)}")
+
+def send_file_to_device(file_path, device_ip):
+    """Send a file to a specific device using the Flask server."""
+    try:
+        url = f"http://{device_ip}:{FLASK_PORT}/upload"
+        with open(file_path, 'rb') as f:
+            files = {'file': f}
+            response = requests.post(url, files=files)
+            if response.status_code == 200:
+                return True
+            else:
+                st.error(f"Failed to send file to {device_ip}: {response.text}")
+                return False
+    except Exception as e:
+        st.error(f"Error sending file to {device_ip}: {str(e)}")
+        return False
 
 def start_flask_server():
     """Start the Flask server in a separate thread."""
-    app.run(host='0.0.0.0', port=PORT + 1, threaded=True)
+    app.run(host='0.0.0.0', port=FLASK_PORT, threaded=True)
 
 # Start Flask server in a separate thread
 flask_thread = threading.Thread(target=start_flask_server, daemon=True)
@@ -154,12 +155,12 @@ def add_platform_headers():
 def create_directories():
     """Create directories with proper permissions for each platform."""
     try:
-        os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
         # Set proper permissions based on platform
         if platform.system() != 'Windows':
-            os.chmod(DOWNLOAD_DIR, 0o755)  # rwxr-xr-x
+            os.chmod(UPLOAD_FOLDER, 0o755)  # rwxr-xr-x
     except Exception as e:
-        st.error(f"Error creating directory {DOWNLOAD_DIR}: {str(e)}")
+        st.error(f"Error creating directory {UPLOAD_FOLDER}: {str(e)}")
 
 create_directories()
 
@@ -187,7 +188,7 @@ def check_app_instance(ip):
         # Try to connect to the Streamlit port
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(0.5)  # 500ms timeout for each connection attempt
-        result = sock.connect_ex((ip, PORT))
+        result = sock.connect_ex((ip, STREAMLIT_PORT))
         sock.close()
         
         if result == 0:
@@ -201,7 +202,7 @@ def check_app_instance(ip):
                     # Method 2: Try to get hostname from the device
                     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     sock.settimeout(0.5)
-                    sock.connect((ip, PORT))
+                    sock.connect((ip, STREAMLIT_PORT))
                     sock.send(b"GET /_stcore/stream HTTP/1.1\r\nHost: " + ip.encode() + b"\r\n\r\n")
                     response = sock.recv(1024).decode()
                     sock.close()
@@ -223,9 +224,9 @@ def check_app_instance(ip):
             try:
                 # Try multiple endpoints to get platform info
                 endpoints = [
-                    f"http://{ip}:{PORT}/_stcore/health",
-                    f"http://{ip}:{PORT}/_stcore/stream",
-                    f"http://{ip}:{PORT}"
+                    f"http://{ip}:{STREAMLIT_PORT}/_stcore/health",
+                    f"http://{ip}:{STREAMLIT_PORT}/_stcore/stream",
+                    f"http://{ip}:{STREAMLIT_PORT}"
                 ]
                 
                 for endpoint in endpoints:
@@ -260,7 +261,7 @@ def check_app_instance(ip):
                         if platform_type == "Unknown":
                             try:
                                 # Try to get Windows-specific information
-                                response = requests.get(f"http://{ip}:{PORT}/_stcore/stream", timeout=0.5)
+                                response = requests.get(f"http://{ip}:{STREAMLIT_PORT}/_stcore/stream", timeout=0.5)
                                 if response.status_code == 200:
                                     # Check for Windows-specific headers or patterns
                                     if any(win_header in response.headers for win_header in ['X-Windows', 'X-Win32', 'X-Windows-NT']):
@@ -358,7 +359,7 @@ def broadcast_presence():
                 'timestamp': datetime.now().isoformat()
             }
             
-            sock.sendto(json.dumps(message).encode(), ('<broadcast>', PORT))
+            sock.sendto(json.dumps(message).encode(), ('<broadcast>', STREAMLIT_PORT))
             sock.close()
             
             time.sleep(BROADCAST_INTERVAL)
@@ -401,7 +402,7 @@ def listen_for_broadcasts():
                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 try:
-                    sock.bind(('', PORT))
+                    sock.bind(('', STREAMLIT_PORT))
                 except OSError as e:
                     if e.errno == 48:  # Address already in use
                         print("Port is already in use, waiting for it to be released...")
@@ -440,7 +441,7 @@ class FileHandler(FileSystemEventHandler):
     def on_created(self, event):
         if not event.is_directory:
             file_path = event.src_path
-            if file_path.startswith(os.path.abspath(DOWNLOAD_DIR)):
+            if file_path.startswith(os.path.abspath(UPLOAD_FOLDER)):
                 try:
                     # Notify main thread of file received
                     file_event_queue.put({'type': 'file_received', 'filename': os.path.basename(file_path)})
@@ -457,7 +458,7 @@ def start_file_watcher():
     if not hasattr(st.session_state, 'file_watcher'):
         event_handler = FileHandler()
         observer = Observer()
-        observer.schedule(event_handler, DOWNLOAD_DIR, recursive=False)
+        observer.schedule(event_handler, UPLOAD_FOLDER, recursive=False)
         observer.start()
         st.session_state.file_watcher = observer
     return st.session_state.file_watcher
@@ -469,22 +470,6 @@ def is_file_size_allowed(file_size):
 def get_file_extension(filename):
     """Get the file extension from filename."""
     return os.path.splitext(filename)[1].lower()
-
-def send_file_to_device(file_path, device_ip):
-    """Send a file to a specific device."""
-    try:
-        url = f"http://{device_ip}:{PORT + 1}/upload"  # Use Flask server port
-        with open(file_path, 'rb') as f:
-            files = {'file': f}
-            response = requests.post(url, files=files)
-            if response.status_code == 200:
-                return True
-            else:
-                st.error(f"Failed to send file to {device_ip}: {response.text}")
-                return False
-    except Exception as e:
-        st.error(f"Error sending file to {device_ip}: {str(e)}")
-        return False
 
 def broadcast_file(file_path):
     """Send a file to all connected devices."""
@@ -536,17 +521,13 @@ def main():
     # Process any new connections from the queue
     process_connection_queue()
     
-    # Process file events from the queue
-    while not file_event_queue.empty():
-        event = file_event_queue.get()
-        if event['type'] == 'file_received':
-            st.session_state.last_received_file = event['filename']
-            st.session_state.last_upload_status = {'success': f"File {event['filename']} received successfully"}
-            st.session_state.last_upload_time = datetime.now()
-
+    # Check for file events
+    check_file_events()
+    
     # Start file watcher if not already started
     if not hasattr(st.session_state, 'file_watcher'):
         start_file_watcher()
+    
     # Display logo
     logo_path = os.path.join("img", "SharedInitlogo.png")
     if os.path.exists(logo_path):
@@ -559,12 +540,11 @@ def main():
     st.info(f"Your local IP address: {local_ip}")
     st.info(f"Platform: {platform.system()} {platform.release()}")
     
-    
     # Check for new file and show toast notification
     if st.session_state.last_received_file:
         st.toast(f"New file received: {st.session_state.last_received_file}")
         # Update the file count
-        st.session_state.last_file_count = len(os.listdir(DOWNLOAD_DIR))
+        st.session_state.last_file_count = len(os.listdir(UPLOAD_FOLDER))
         # Clear the received file flag
         st.session_state.last_received_file = None
         # Force a refresh to update the file list
@@ -583,8 +563,8 @@ def main():
     start_background_tasks()
     
     # Create downloads directory if it doesn't exist
-    if not os.path.exists(DOWNLOAD_DIR):
-        os.makedirs(DOWNLOAD_DIR)
+    if not os.path.exists(UPLOAD_FOLDER):
+        os.makedirs(UPLOAD_FOLDER)
     
     # File upload section
     st.header("Send Files")
@@ -625,7 +605,7 @@ def main():
                 return
 
             # Save the uploaded file temporarily
-            temp_file_path = os.path.join(DOWNLOAD_DIR, uploaded_file.name)
+            temp_file_path = os.path.join(UPLOAD_FOLDER, uploaded_file.name)
             with open(temp_file_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
             
@@ -651,18 +631,18 @@ def main():
     st.header("Current Session Files")
     
     # Check if the number of files has changed
-    current_file_count = len(os.listdir(DOWNLOAD_DIR))
+    current_file_count = len(os.listdir(UPLOAD_FOLDER))
     if current_file_count != st.session_state.last_file_count:
         st.session_state.last_file_count = current_file_count
         st.rerun()  # This will refresh the page
     
-    files = os.listdir(DOWNLOAD_DIR)
+    files = os.listdir(UPLOAD_FOLDER)
     current_session_files = [f for f in files if f in st.session_state.current_session_files]
     historical_files = [f for f in files if f not in st.session_state.current_session_files]
     
     if current_session_files:
         for file in current_session_files:
-            file_path = os.path.join(DOWNLOAD_DIR, file)
+            file_path = os.path.join(UPLOAD_FOLDER, file)
             col1, col2, col3 = st.columns([3, 1, 1])
             with col1:
                 st.write(file)
@@ -699,7 +679,7 @@ def main():
     with st.expander("Historical Files", expanded=False):
         if historical_files:
             for file in historical_files:
-                file_path = os.path.join(DOWNLOAD_DIR, file)
+                file_path = os.path.join(UPLOAD_FOLDER, file)
                 col1, col2, col3 = st.columns([3, 1, 1])
                 with col1:
                     st.write(file)
