@@ -32,6 +32,8 @@ STREAMLIT_PORT = 8501
 FLASK_PORT = 8502
 BROADCAST_INTERVAL = 10
 EVENT_FILE = "file_events.json"
+RERUN_SIGNAL_FILE = "rerun_signal.txt"
+last_signal_time = 0
 
 # Create a thread-safe queue for communication
 connection_queue = queue.Queue()
@@ -59,28 +61,50 @@ if 'last_deletion_time' not in st.session_state:
 if 'last_event_check' not in st.session_state:
     st.session_state.last_event_check = datetime.now()
 
-def check_file_events():
-    """Check for new file events."""
+def check_rerun_signal():
+    """Check if Flask has signaled for a rerun."""
+    global last_signal_time
     try:
-        if not os.path.exists(EVENT_FILE):
-            return
-        
-        # Read events
-        with open(EVENT_FILE, 'r') as f:
-            events = json.load(f)
-        
-        # Process new events
-        for event in events:
-            if event['type'] == 'file_received':
-                st.session_state.last_received_file = event['filename']
-                st.session_state.last_upload_status = {
-                    'success': f"File {event['filename']} received successfully"
-                }
-                st.session_state.last_upload_time = datetime.now()
-        
-        # Clear the event file
-        with open(EVENT_FILE, 'w') as f:
-            json.dump([], f)
+        if os.path.exists(RERUN_SIGNAL_FILE):
+            with open(RERUN_SIGNAL_FILE, 'r') as f:
+                signal_time = float(f.read().strip())
+            
+            # If this is a new signal, trigger rerun
+            if signal_time > last_signal_time:
+                last_signal_time = signal_time
+                # Remove the signal file
+                os.remove(RERUN_SIGNAL_FILE)
+                return True
+    except Exception as e:
+        logger.error(f"Error checking rerun signal: {str(e)}")
+    return False
+
+def check_file_events():
+    """Check for new file events from Flask server."""
+    try:
+        # Get events from Flask server
+        response = requests.get(f"http://localhost:{FLASK_PORT}/check_events")
+        if response.status_code == 200:
+            events = response.json().get('events', [])
+            
+            # Process new events
+            for event in events:
+                if event['type'] == 'file_received':
+                    # Update session state
+                    st.session_state.last_received_file = event['filename']
+                    st.session_state.last_upload_status = {
+                        'success': f"File {event['filename']} received successfully"
+                    }
+                    st.session_state.last_upload_time = datetime.now()
+                    
+                    # Show success message
+                    st.success(f"📥 New file received: {event['filename']}")
+                    
+                    # Show toast notification
+                    st.toast(f"📥 New file received: {event['filename']}")
+                    
+                    # Force rerun to update the UI
+                    st.rerun()
             
     except Exception as e:
         logger.error(f"Error checking file events: {str(e)}")
@@ -512,6 +536,10 @@ def delete_file(file_path):
     return False
 
 def main():
+    # Check for rerun signal
+    if check_rerun_signal():
+        st.rerun()
+    
     # Process any new connections from the queue
     process_connection_queue()
     
