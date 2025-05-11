@@ -62,28 +62,49 @@ if 'last_event_check' not in st.session_state:
 def check_file_events():
     """Check for new file events."""
     try:
-        if not os.path.exists(EVENT_FILE):
-            return
-        
-        # Read events
-        with open(EVENT_FILE, 'r') as f:
-            events = json.load(f)
-        
-        # Process new events
-        for event in events:
-            if event['type'] == 'file_received':
-                st.session_state.last_received_file = event['filename']
-                st.session_state.last_upload_status = {
-                    'success': f"File {event['filename']} received successfully"
-                }
-                st.session_state.last_upload_time = datetime.now()
-        
-        # Clear the event file
-        with open(EVENT_FILE, 'w') as f:
-            json.dump([], f)
+        # Get events from Flask server
+        response = requests.get(f"http://localhost:{FLASK_PORT}/check_events")
+        if response.status_code == 200:
+            events = response.json().get('events', [])
+            logger.info(f"Received events from Flask: {events}")
+            print(f"Received events from Flask: {events}")
+            
+            # Process new events
+            for event in events:
+                if event['type'] == 'file_received':
+                    filename = event['filename']
+                    # Update session state
+                    st.session_state.last_received_file = filename
+                    logger.info(f"Setting last_received_file to: {filename}")
+                    print(f"Setting last_received_file to: {filename}")
+                    
+                    st.session_state.last_upload_status = {
+                        'success': f"File {filename} received successfully"
+                    }
+                    st.session_state.last_upload_time = datetime.now()
+                    
+                    # Show success message
+                    st.success(f"📥 New file received: {filename}")
+                    
+                    # Show toast notification
+                    st.toast(f"📥 New file received: {filename}")
+                    
+                    # Try to open the file before rerun
+                    file_path = os.path.join(UPLOAD_FOLDER, filename)
+                    logger.info(f"Attempting to open file: {file_path}")
+                    print(f"Attempting to open file: {file_path}")
+                    if os.path.exists(file_path):
+                        open_file_with_default_app(file_path)
+                    else:
+                        logger.error(f"File not found: {file_path}")
+                        print(f"File not found: {file_path}")
+                    
+                    # Force rerun to update the UI
+                    st.rerun()
             
     except Exception as e:
         logger.error(f"Error checking file events: {str(e)}")
+        print(f"Error checking file events: {str(e)}")
 
 def send_file_to_device(file_path, device_ip):
     """Send a file to a specific device using the Flask server."""
@@ -497,9 +518,6 @@ def delete_file(file_path):
         if os.path.exists(file_path):
             filename = os.path.basename(file_path)
             os.remove(file_path)
-            # Remove from current session files if it exists there
-            if filename in st.session_state.current_session_files:
-                st.session_state.current_session_files.remove(filename)
             
             # Update deletion status
             st.session_state.last_deletion_status = {'success': f'Successfully deleted {filename}'}
@@ -533,7 +551,34 @@ def main():
     local_ip = get_local_ip()
     st.info(f"Your local IP address: {local_ip}")
     st.info(f"Platform: {platform.system()} {platform.release()}")
+    #Display received files with auto-refresh
+    st.header("Received Files")
     
+    # Check if the number of files has changed
+    current_file_count = len(os.listdir(UPLOAD_FOLDER))
+    if current_file_count != st.session_state.last_file_count:
+        st.session_state.last_file_count = current_file_count
+        st.rerun()  # This will refresh the page
+    
+    files = os.listdir(UPLOAD_FOLDER)
+    
+    if files:
+        for file in files:
+            file_path = os.path.join(UPLOAD_FOLDER, file)
+            col1, col2, col3 = st.columns([3, 1, 1])
+            with col1:
+                st.write(file)
+            with col2:
+                if st.button("Open", key=f"open_{file}"):
+                    open_file_with_default_app(file_path)
+            with col3:
+                if st.button("🗑️ Delete", key=f"delete_{file}"):
+                    if delete_file(file_path):
+                        st.success(f"Deleted {file}")
+                        st.rerun()
+    else:
+        st.info("No files have been transferred yet.")
+
     # Check for new file and show toast notification
     if st.session_state.last_received_file:
         st.toast(f"New file received: {st.session_state.last_received_file}")
@@ -621,35 +666,7 @@ def main():
     else:
         st.info("No other devices connected. Start the app on other devices to enable file sharing.")
     
-    # Display received files with auto-refresh
-    st.header("Current Session Files")
-    
-    # Check if the number of files has changed
-    current_file_count = len(os.listdir(UPLOAD_FOLDER))
-    if current_file_count != st.session_state.last_file_count:
-        st.session_state.last_file_count = current_file_count
-        st.rerun()  # This will refresh the page
-    
-    files = os.listdir(UPLOAD_FOLDER)
-    current_session_files = [f for f in files if f in st.session_state.current_session_files]
-    historical_files = [f for f in files if f not in st.session_state.current_session_files]
-    
-    if current_session_files:
-        for file in current_session_files:
-            file_path = os.path.join(UPLOAD_FOLDER, file)
-            col1, col2, col3 = st.columns([3, 1, 1])
-            with col1:
-                st.write(file)
-            with col2:
-                if st.button("Open", key=f"current_{file}"):
-                    open_file_with_default_app(file_path)
-            with col3:
-                if st.button("🗑️ Delete", key=f"delete_current_{file}"):
-                    if delete_file(file_path):
-                        st.success(f"Deleted {file}")
-                        st.rerun()
-    else:
-        st.info("No files received in current session.")
+
     
     if st.session_state.last_upload_status and st.session_state.last_upload_time:
         time_diff = (datetime.now() - st.session_state.last_upload_time).total_seconds()
@@ -657,9 +674,22 @@ def main():
             if 'error' in st.session_state.last_upload_status:
                 st.error(st.session_state.last_upload_status['error'])
             elif 'success' in st.session_state.last_upload_status:
-                st.success(st.session_state.last_upload_status['success'])
-                # Add a toast notification for received files
                 st.toast(st.session_state.last_upload_status['success'])
+                
+                # Log the last received file
+                logger.info(f"Last received file: {st.session_state.last_received_file}")
+                print(f"Last received file: {st.session_state.last_received_file}")
+                
+                # Open the file in default app
+                if st.session_state.last_received_file:
+                    file_path = os.path.join(UPLOAD_FOLDER, st.session_state.last_received_file)
+                    logger.info(f"Attempting to open file: {file_path}")
+                    print(f"Attempting to open file: {file_path}")
+                    if os.path.exists(file_path):
+                        open_file_with_default_app(file_path)
+                    else:
+                        logger.error(f"File not found: {file_path}")
+                        print(f"File not found: {file_path}")
     
     # Display last deletion status if it exists and is recent (within last 5 seconds)
     if st.session_state.last_deletion_status and st.session_state.last_deletion_time:
@@ -669,24 +699,7 @@ def main():
                 st.error(st.session_state.last_deletion_status['error'])
             elif 'success' in st.session_state.last_deletion_status:
                 st.success(st.session_state.last_deletion_status['success'])
-    # Display historical files
-    with st.expander("Historical Files", expanded=False):
-        if historical_files:
-            for file in historical_files:
-                file_path = os.path.join(UPLOAD_FOLDER, file)
-                col1, col2, col3 = st.columns([3, 1, 1])
-                with col1:
-                    st.write(file)
-                with col2:
-                    if st.button("Open", key=f"historical_{file}"):
-                        open_file_with_default_app(file_path)
-                with col3:
-                    if st.button("🗑️ Delete", key=f"delete_historical_{file}"):
-                        if delete_file(file_path):
-                            st.rerun()
-        else:
-            st.info("No historical files found.")
-    
+
     # Supported Applications Section - Concise Version (moved to end)
     st.markdown("---")
     st.header("📚 Supported Applications")

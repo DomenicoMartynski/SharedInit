@@ -41,15 +41,26 @@ def write_event(event):
                     events = []
         
         # Add new event
-        events.append(event)
+        new_event = {
+            'type': event_type,
+            'filename': filename,
+            'timestamp': datetime.now().isoformat()
+        }
+        events.append(new_event)
         
         # Write back to file
         with open(EVENT_FILE, 'w') as f:
             json.dump(events, f)
             
-        logger.info(f"Event written: {event}")
+        logger.info(f"Saved file event: {new_event}")
+        print(f"Saved file event: {new_event}")
+        
+        # Trigger Streamlit rerun
+        trigger_streamlit_rerun()
+            
     except Exception as e:
-        logger.error(f"Error writing event: {str(e)}")
+        logger.error(f"Error saving file event: {str(e)}")
+        print(f"Error saving file event: {str(e)}")
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -85,6 +96,29 @@ def upload_file():
         logger.error(f"Current working directory: {os.getcwd()}")
         logger.error(f"Attempted to save to: {os.path.abspath(file_path)}")
         return jsonify({'error': f"Failed to upload file: {str(e)}"}), 500
+
+@app.route('/check_events', methods=['GET'])
+def check_events():
+    """Check for new file events."""
+    try:
+        if not os.path.exists(EVENT_FILE):
+            logger.info("No event file found")
+            return jsonify({'events': []}), 200
+            
+        with open(EVENT_FILE, 'r') as f:
+            events = json.load(f)
+            logger.info(f"Returning events: {events}")
+            print(f"Returning events: {events}")
+            
+        # Clear the event file after reading
+        with open(EVENT_FILE, 'w') as f:
+            json.dump([], f)
+            
+        return jsonify({'events': events}), 200
+    except Exception as e:
+        logger.error(f"Error checking events: {str(e)}")
+        print(f"Error checking events: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/health', methods=['GET'])
 def health_check():
