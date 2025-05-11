@@ -41,22 +41,14 @@ def write_event(event):
                     events = []
         
         # Add new event
-        new_event = {
-            'type': event_type,
-            'filename': filename,
-            'timestamp': datetime.now().isoformat()
-        }
-        events.append(new_event)
+        events.append(event)
         
         # Write back to file
         with open(EVENT_FILE, 'w') as f:
             json.dump(events, f)
             
-        logger.info(f"Saved file event: {new_event}")
-        print(f"Saved file event: {new_event}")
-        
-        # Trigger Streamlit rerun
-        trigger_streamlit_rerun()
+        logger.info(f"Saved file event: {event}")
+        print(f"Saved file event: {event}")
             
     except Exception as e:
         logger.error(f"Error saving file event: {str(e)}")
