@@ -35,6 +35,7 @@ EVENT_FILE = "file_events.json"
 
 # Create a thread-safe queue for communication
 connection_queue = queue.Queue()
+file_event_queue = queue.Queue()
 
 # Initialize session state
 if 'active_connections' not in st.session_state:
@@ -100,14 +101,7 @@ def send_file_to_device(file_path, device_ip):
         st.error(f"Error sending file to {device_ip}: {str(e)}")
         return False
 
-def start_flask_server():
-    """Start the Flask server in a separate thread."""
-    app.run(host='0.0.0.0', port=FLASK_PORT, threaded=True)
-
-# Start Flask server in a separate thread
-flask_thread = threading.Thread(target=start_flask_server, daemon=True)
-flask_thread.start()
-
+# Flask server is now handled by file_server.py
 # Configure Streamlit page
 st.set_page_config(
     page_title="LAN File Sharing App",
