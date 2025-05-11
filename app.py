@@ -28,6 +28,9 @@ BROADCAST_INTERVAL = 10
 # Create a thread-safe queue for communication
 connection_queue = queue.Queue()
 
+# Create a thread-safe queue for file events
+file_event_queue = queue.Queue()
+
 # Initialize session state for active connections and file refresh
 if 'active_connections' not in st.session_state:
     st.session_state.active_connections = {}
@@ -39,6 +42,14 @@ if 'current_session_files' not in st.session_state:
     st.session_state.current_session_files = set()
 if 'background_threads_started' not in st.session_state:
     st.session_state.background_threads_started = False
+if 'last_upload_status' not in st.session_state:
+    st.session_state.last_upload_status = None
+if 'last_upload_time' not in st.session_state:
+    st.session_state.last_upload_time = None
+if 'last_deletion_status' not in st.session_state:
+    st.session_state.last_deletion_status = None
+if 'last_deletion_time' not in st.session_state:
+    st.session_state.last_deletion_time = None
 
 # Create Flask app for handling file uploads
 app = Flask(__name__)
@@ -48,9 +59,13 @@ app.config['UPLOAD_FOLDER'] = DOWNLOAD_DIR  # Set the upload folder to DOWNLOAD_
 @app.route('/upload', methods=['POST'])
 def upload_file():
     if 'file' not in request.files:
+        st.session_state.last_upload_status = {'error': 'No file part'}
+        st.session_state.last_upload_time = datetime.now()
         return jsonify({'error': 'No file part'}), 400
     file = request.files['file']
     if file.filename == '':
+        st.session_state.last_upload_status = {'error': 'No selected file'}
+        st.session_state.last_upload_time = datetime.now()
         return jsonify({'error': 'No selected file'}), 400
     
     try:
@@ -65,13 +80,24 @@ def upload_file():
         file.save(file_path)
         print(f"Successfully saved file to: {os.path.abspath(file_path)}")
         
+        # Notify main thread of file received
+        file_event_queue.put({'type': 'file_received', 'filename': file.filename})
+        
         return jsonify({'message': 'File uploaded successfully'}), 200
     except Exception as e:
         # Log the full error for debugging
         print(f"Error saving file: {str(e)}")
         print(f"Current working directory: {os.getcwd()}")
         print(f"Attempted to save to: {os.path.abspath(file_path)}")
-        return jsonify({'error': f"Failed to save file: {str(e)}"}), 500
+        
+        # Update session state with error
+        st.session_state.last_upload_status = {'error': f"Failed to upload file: {str(e)}"}
+        st.session_state.last_upload_time = datetime.now()
+        
+        # Force a rerun to show the error
+        st.rerun()
+        
+        return jsonify({'error': f"Failed to upload file: {str(e)}"}), 500
 
 def start_flask_server():
     """Start the Flask server in a separate thread."""
@@ -415,22 +441,26 @@ class FileHandler(FileSystemEventHandler):
         if not event.is_directory:
             file_path = event.src_path
             if file_path.startswith(os.path.abspath(DOWNLOAD_DIR)):
-                # Update the last received file
-                st.session_state.last_received_file = os.path.basename(file_path)
-                # Add to current session files
-                if 'current_session_files' not in st.session_state:
-                    st.session_state.current_session_files = set()
-                st.session_state.current_session_files.add(os.path.basename(file_path))
-                # Open the file
-                open_file_with_default_app(file_path)
+                try:
+                    # Notify main thread of file received
+                    file_event_queue.put({'type': 'file_received', 'filename': os.path.basename(file_path)})
+                    # Open the file after a short delay to ensure the UI is updated
+                    def delayed_open():
+                        time.sleep(1)
+                        open_file_with_default_app(file_path)
+                    threading.Thread(target=delayed_open, daemon=True).start()
+                except Exception as e:
+                    print(f"Error handling new file: {str(e)}")
 
 def start_file_watcher():
     """Start watching the downloads directory for new files."""
-    event_handler = FileHandler()
-    observer = Observer()
-    observer.schedule(event_handler, DOWNLOAD_DIR, recursive=False)
-    observer.start()
-    return observer
+    if not hasattr(st.session_state, 'file_watcher'):
+        event_handler = FileHandler()
+        observer = Observer()
+        observer.schedule(event_handler, DOWNLOAD_DIR, recursive=False)
+        observer.start()
+        st.session_state.file_watcher = observer
+    return st.session_state.file_watcher
 
 def is_file_size_allowed(file_size):
     """Check if the file size is within allowed limits."""
@@ -486,13 +516,19 @@ def delete_file(file_path):
     """Delete a file and remove it from session state if it exists."""
     try:
         if os.path.exists(file_path):
+            filename = os.path.basename(file_path)
             os.remove(file_path)
             # Remove from current session files if it exists there
-            filename = os.path.basename(file_path)
             if filename in st.session_state.current_session_files:
                 st.session_state.current_session_files.remove(filename)
+            
+            # Update deletion status
+            st.session_state.last_deletion_status = {'success': f'Successfully deleted {filename}'}
+            st.session_state.last_deletion_time = datetime.now()
             return True
     except Exception as e:
+        st.session_state.last_deletion_status = {'error': f'Error deleting file: {str(e)}'}
+        st.session_state.last_deletion_time = datetime.now()
         st.error(f"Error deleting file: {str(e)}")
     return False
 
@@ -500,6 +536,17 @@ def main():
     # Process any new connections from the queue
     process_connection_queue()
     
+    # Process file events from the queue
+    while not file_event_queue.empty():
+        event = file_event_queue.get()
+        if event['type'] == 'file_received':
+            st.session_state.last_received_file = event['filename']
+            st.session_state.last_upload_status = {'success': f"File {event['filename']} received successfully"}
+            st.session_state.last_upload_time = datetime.now()
+
+    # Start file watcher if not already started
+    if not hasattr(st.session_state, 'file_watcher'):
+        start_file_watcher()
     # Display logo
     logo_path = os.path.join("img", "SharedInitlogo.png")
     if os.path.exists(logo_path):
@@ -511,6 +558,7 @@ def main():
     local_ip = get_local_ip()
     st.info(f"Your local IP address: {local_ip}")
     st.info(f"Platform: {platform.system()} {platform.release()}")
+    
     
     # Check for new file and show toast notification
     if st.session_state.last_received_file:
@@ -629,6 +677,24 @@ def main():
     else:
         st.info("No files received in current session.")
     
+    if st.session_state.last_upload_status and st.session_state.last_upload_time:
+        time_diff = (datetime.now() - st.session_state.last_upload_time).total_seconds()
+        if time_diff < 5:  # Only show status for 5 seconds
+            if 'error' in st.session_state.last_upload_status:
+                st.error(st.session_state.last_upload_status['error'])
+            elif 'success' in st.session_state.last_upload_status:
+                st.success(st.session_state.last_upload_status['success'])
+                # Add a toast notification for received files
+                st.toast(st.session_state.last_upload_status['success'])
+    
+    # Display last deletion status if it exists and is recent (within last 5 seconds)
+    if st.session_state.last_deletion_status and st.session_state.last_deletion_time:
+        time_diff = (datetime.now() - st.session_state.last_deletion_time).total_seconds()
+        if time_diff < 5:  # Only show status for 5 seconds
+            if 'error' in st.session_state.last_deletion_status:
+                st.error(st.session_state.last_deletion_status['error'])
+            elif 'success' in st.session_state.last_deletion_status:
+                st.success(st.session_state.last_deletion_status['success'])
     # Display historical files
     with st.expander("Historical Files", expanded=False):
         if historical_files:
@@ -643,7 +709,6 @@ def main():
                 with col3:
                     if st.button("🗑️ Delete", key=f"delete_historical_{file}"):
                         if delete_file(file_path):
-                            st.success(f"Deleted {file}")
                             st.rerun()
         else:
             st.info("No historical files found.")
@@ -676,10 +741,10 @@ def main():
     """)
 
 if __name__ == "__main__":
-    # Start file watcher in a separate thread
-    observer = start_file_watcher()
     try:
         main()
     finally:
-        observer.stop()
-        observer.join() 
+        # Clean up file watcher if it exists
+        if hasattr(st.session_state, 'file_watcher'):
+            st.session_state.file_watcher.stop()
+            st.session_state.file_watcher.join() 
