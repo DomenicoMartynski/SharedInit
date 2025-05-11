@@ -3,3 +3,4 @@ shared_files/*
 received_files/*
 downloads/*
 .DS_Store
+rerun_signal.txt

@@ -560,6 +560,15 @@ def main():
         st.session_state.last_file_count = current_file_count
         st.rerun()  # This will refresh the page
     
+    # Display last deletion status if it exists and is recent (within last 5 seconds)
+    if st.session_state.last_deletion_status and st.session_state.last_deletion_time:
+        time_diff = (datetime.now() - st.session_state.last_deletion_time).total_seconds()
+        if time_diff < 5:  # Only show status for 5 seconds
+            if 'error' in st.session_state.last_deletion_status:
+                st.error(st.session_state.last_deletion_status['error'])
+            elif 'success' in st.session_state.last_deletion_status:
+                st.success(st.session_state.last_deletion_status['success'])
+
     files = os.listdir(UPLOAD_FOLDER)
     
     if files:
@@ -691,14 +700,6 @@ def main():
                         logger.error(f"File not found: {file_path}")
                         print(f"File not found: {file_path}")
     
-    # Display last deletion status if it exists and is recent (within last 5 seconds)
-    if st.session_state.last_deletion_status and st.session_state.last_deletion_time:
-        time_diff = (datetime.now() - st.session_state.last_deletion_time).total_seconds()
-        if time_diff < 5:  # Only show status for 5 seconds
-            if 'error' in st.session_state.last_deletion_status:
-                st.error(st.session_state.last_deletion_status['error'])
-            elif 'success' in st.session_state.last_deletion_status:
-                st.success(st.session_state.last_deletion_status['success'])
 
     # Supported Applications Section - Concise Version (moved to end)
     st.markdown("---")
