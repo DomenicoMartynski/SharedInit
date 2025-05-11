@@ -25,6 +25,9 @@ PORT = 8501
 DOWNLOAD_DIR = "downloads"
 BROADCAST_INTERVAL = 10
 
+# Create a thread-safe queue for communication
+connection_queue = queue.Queue()
+
 # Initialize session state for active connections and file refresh
 if 'active_connections' not in st.session_state:
     st.session_state.active_connections = {}
@@ -34,6 +37,8 @@ if 'last_received_file' not in st.session_state:
     st.session_state.last_received_file = None
 if 'current_session_files' not in st.session_state:
     st.session_state.current_session_files = set()
+if 'background_threads_started' not in st.session_state:
+    st.session_state.background_threads_started = False
 
 # Create Flask app for handling file uploads
 app = Flask(__name__)
@@ -335,37 +340,75 @@ def broadcast_presence():
             print(f"Broadcast error: {e}")
             time.sleep(BROADCAST_INTERVAL)
 
+def start_background_tasks():
+    """Start background tasks for broadcasting and listening."""
+    if not st.session_state.background_threads_started:
+        # Initialize active_connections if it doesn't exist
+        if 'active_connections' not in st.session_state:
+            st.session_state.active_connections = {}
+            
+        # Start broadcast thread
+        broadcast_thread = threading.Thread(target=broadcast_presence, daemon=True)
+        broadcast_thread.start()
+        
+        # Start listen thread
+        listen_thread = threading.Thread(target=listen_for_broadcasts, daemon=True)
+        listen_thread.start()
+        
+        st.session_state.background_threads_started = True
+
+def process_connection_queue():
+    """Process any new connections from the queue."""
+    try:
+        while not connection_queue.empty():
+            connection_info = connection_queue.get_nowait()
+            st.session_state.active_connections[connection_info['ip']] = connection_info
+    except queue.Empty:
+        pass
+
 def listen_for_broadcasts():
     """Listen for presence broadcasts from other instances."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind(('', PORT))
-    
+    sock = None
     while True:
         try:
+            if sock is None:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                try:
+                    sock.bind(('', PORT))
+                except OSError as e:
+                    if e.errno == 48:  # Address already in use
+                        print("Port is already in use, waiting for it to be released...")
+                        time.sleep(5)  # Wait before retrying
+                        continue
+                    else:
+                        raise
+            
             data, addr = sock.recvfrom(1024)
             message = json.loads(data.decode())
             
             if message['type'] == 'presence' and message['ip'] != get_local_ip():
-                st.session_state.active_connections[message['ip']] = {
+                # Create a new connection info dictionary
+                connection_info = {
                     'ip': message['ip'],
                     'hostname': message['hostname'],
                     'platform': message['platform'],
                     'last_seen': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     'status': 'Online'
                 }
+                
+                # Put the connection info in the queue instead of directly accessing session state
+                connection_queue.put(connection_info)
+                
         except Exception as e:
             print(f"Listen error: {e}")
-
-def start_background_tasks():
-    """Start background tasks for broadcasting and listening."""
-    if 'broadcast_thread' not in st.session_state:
-        st.session_state.broadcast_thread = threading.Thread(target=broadcast_presence, daemon=True)
-        st.session_state.broadcast_thread.start()
-    
-    if 'listen_thread' not in st.session_state:
-        st.session_state.listen_thread = threading.Thread(target=listen_for_broadcasts, daemon=True)
-        st.session_state.listen_thread.start()
+            if sock is not None:
+                try:
+                    sock.close()
+                except:
+                    pass
+                sock = None
+            time.sleep(1)  # Add a small delay to prevent tight error loops
 
 class FileHandler(FileSystemEventHandler):
     def on_created(self, event):
@@ -454,6 +497,9 @@ def delete_file(file_path):
     return False
 
 def main():
+    # Process any new connections from the queue
+    process_connection_queue()
+    
     # Display logo
     logo_path = os.path.join("img", "SharedInitlogo.png")
     if os.path.exists(logo_path):
