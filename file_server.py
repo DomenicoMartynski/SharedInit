@@ -3,6 +3,7 @@ import os
 import logging
 from datetime import datetime
 import json
+import requests
 
 # Configure logging
 logging.basicConfig(
@@ -16,6 +17,7 @@ UPLOAD_FOLDER = "downloads"
 MAX_FILE_SIZE = 200 * 1024 * 1024  # 200MB max file size
 PORT = 8502  # Different port from Streamlit
 EVENT_FILE = "file_events.json"  # File to store events for Streamlit to read
+STREAMLIT_PORT = 8501  # Port for Streamlit app
 
 # Create Flask app
 app = Flask(__name__)
@@ -54,6 +56,18 @@ def write_event(event):
         logger.error(f"Error saving file event: {str(e)}")
         print(f"Error saving file event: {str(e)}")
 
+def check_downloads_enabled():
+    """Check if downloads are enabled in the Streamlit app."""
+    try:
+        response = requests.get(f"http://localhost:{STREAMLIT_PORT}/_stcore/stream")
+        if response.status_code == 200:
+            # Look for the downloads_enabled state in the response
+            # This is a simplified check - you might need to adjust based on actual response format
+            return "downloads_enabled" in response.text and "true" in response.text.lower()
+    except Exception as e:
+        logger.error(f"Error checking downloads status: {str(e)}")
+    return True  # Default to True if we can't check
+
 @app.route('/upload', methods=['POST'])
 def upload_file():
     """Handle file uploads."""
@@ -67,6 +81,11 @@ def upload_file():
         return jsonify({'error': 'No selected file'}), 400
     
     try:
+        # Check if downloads are enabled
+        if not check_downloads_enabled():
+            logger.info("Downloads are disabled, rejecting file upload")
+            return jsonify({'message': 'Downloads are currently disabled'}), 403
+        
         ensure_upload_folder()
         
         # Save the file

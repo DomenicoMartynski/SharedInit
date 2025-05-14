@@ -587,11 +587,25 @@ def main():
     st.title("LAN File Sharing App")
     
     # Add toggle buttons
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         sender_enabled = st.toggle("Enable File Sending", value=False, key="sender_toggle")
     with col2:
         auto_open_enabled = st.toggle("Auto-open Received Files", value=True, key="auto_open_toggle")
+    with col3:
+        downloads_enabled = st.toggle("Enable File Downloads", value=True, key="downloads_toggle")
+    
+    # Add downloads_enabled state to the page for Flask server to check
+    st.markdown(
+        f"""
+        <script>
+            // Add downloads_enabled state to the page
+            const downloadsEnabled = {str(downloads_enabled).lower()};
+            document.body.setAttribute('data-downloads-enabled', downloadsEnabled);
+        </script>
+        """,
+        unsafe_allow_html=True
+    )
     
     # Display local IP address and platform
     local_ip = get_local_ip()
