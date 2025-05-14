@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import os
 import logging
 from datetime import datetime
@@ -21,6 +22,7 @@ STREAMLIT_PORT = 8501  # Port for Streamlit app
 
 # Create Flask app
 app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
 app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
@@ -56,17 +58,33 @@ def write_event(event):
         logger.error(f"Error saving file event: {str(e)}")
         print(f"Error saving file event: {str(e)}")
 
+@app.route('/downloads_enabled', methods=['POST'])
 def check_downloads_enabled():
     """Check if downloads are enabled in the Streamlit app."""
     try:
-        response = requests.get(f"http://localhost:{STREAMLIT_PORT}/_stcore/stream")
-        if response.status_code == 200:
-            # Look for the downloads_enabled state in the response
-            # This is a simplified check - you might need to adjust based on actual response format
-            return "downloads_enabled" in response.text and "true" in response.text.lower()
+        logger.info(f"Received request headers: {dict(request.headers)}")
+        logger.info(f"Received request data: {request.get_data()}")
+        
+        # Check content type
+        if not request.headers.get('Content-Type', '').startswith('application/json'):
+            logger.error(f"Invalid Content-Type: {request.headers.get('Content-Type')}")
+            return jsonify({'error': 'Content-Type must be application/json', 'downloads_enabled': False}), 400
+            
+        # Try to get JSON data
+        try:
+            data = request.get_json(force=True)  # force=True to try parsing even if content-type is wrong
+            logger.info(f"Parsed JSON data: {data}")
+        except Exception as e:
+            logger.error(f"Failed to parse JSON: {str(e)}")
+            return jsonify({'error': 'Invalid JSON data', 'downloads_enabled': False}), 400
+        
+        downloads_enabled = data.get('downloads_enabled', False)
+        logger.info(f"Downloads enabled state: {downloads_enabled}")
+        
+        return jsonify({'downloads_enabled': downloads_enabled}), 200
     except Exception as e:
         logger.error(f"Error checking downloads status: {str(e)}")
-    return True  # Default to True if we can't check
+        return jsonify({'error': str(e), 'downloads_enabled': False}), 500
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -81,10 +99,21 @@ def upload_file():
         return jsonify({'error': 'No selected file'}), 400
     
     try:
-        # Check if downloads are enabled
-        if not check_downloads_enabled():
-            logger.info("Downloads are disabled, rejecting file upload")
-            return jsonify({'message': 'Downloads are currently disabled'}), 403
+        # Check if downloads are enabled by making a request to the downloads_enabled endpoint
+        try:
+            response = requests.post(
+                f"http://localhost:{PORT}/downloads_enabled",
+                json={'downloads_enabled': True},
+                headers={'Content-Type': 'application/json'}
+            )
+            if response.status_code == 200:
+                data = response.json()
+                if not data.get('downloads_enabled', False):
+                    logger.info("Downloads are disabled, rejecting file upload")
+                    return jsonify({'message': 'Downloads are currently disabled'}), 403
+        except Exception as e:
+            logger.error(f"Error checking downloads status: {str(e)}")
+            return jsonify({'error': 'Failed to check downloads status'}), 500
         
         ensure_upload_folder()
         

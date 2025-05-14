@@ -568,6 +568,45 @@ def auto_open_received_files(auto_open_enabled):
         except:
             pass
 
+@st.fragment(run_every=1)
+def is_state_enabled(downloads_enabled):
+    logger.info(f"Current downloads_enabled state: {downloads_enabled}")
+    st.markdown(
+        f"""
+        <script>
+            // Add downloads_enabled state to the page
+            const downloadsEnabled = {str(downloads_enabled).lower()};
+            document.body.setAttribute('data-downloads-enabled', downloadsEnabled);
+            
+            // Send state to Flask server
+            const data = {{
+                downloads_enabled: downloadsEnabled
+            }};
+            
+            const requestOptions = {{
+                method: 'POST',
+                headers: {{
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                }},
+                body: JSON.stringify(data)
+            }};
+            
+            // Send the request
+            fetch("http://localhost:8502/downloads_enabled", requestOptions)
+                .then(response => {{
+                    if (!response.ok) {{
+                        throw new Error(`HTTP error! status: ${{response.status}}`);
+                    }}
+                    return response.json();
+                }})
+                .then(data => console.log('Success:', data))
+                .catch(error => console.error('Error:', error));
+        </script>
+        """,
+        unsafe_allow_html=True
+    )
+
 def main():
     # Process any new connections from the queue
     process_connection_queue()
@@ -593,19 +632,13 @@ def main():
     with col2:
         auto_open_enabled = st.toggle("Auto-open Received Files", value=True, key="auto_open_toggle")
     with col3:
-        downloads_enabled = st.toggle("Enable File Downloads", value=True, key="downloads_toggle")
+        if 'downloads_enabled' not in st.session_state:
+            st.session_state.downloads_enabled = True
+        downloads_enabled = st.toggle("Enable File Downloads", value=st.session_state.downloads_enabled, key="downloads_toggle")
+        st.session_state.downloads_enabled = downloads_enabled
     
-    # Add downloads_enabled state to the page for Flask server to check
-    st.markdown(
-        f"""
-        <script>
-            // Add downloads_enabled state to the page
-            const downloadsEnabled = {str(downloads_enabled).lower()};
-            document.body.setAttribute('data-downloads-enabled', downloadsEnabled);
-        </script>
-        """,
-        unsafe_allow_html=True
-    )
+    # Update the downloads_enabled state
+    is_state_enabled(st.session_state.downloads_enabled)
     
     # Display local IP address and platform
     local_ip = get_local_ip()
