@@ -529,6 +529,45 @@ def delete_file(file_path):
         st.error(f"Error deleting file: {str(e)}")
     return False
 
+@st.fragment(run_every=5)
+def auto_open_received_files():
+    """Check file_events.json every 5 seconds and open new files."""
+    try:
+        if os.path.exists(EVENT_FILE):
+            events = []
+            # Read events
+            with open(EVENT_FILE, 'r') as f:
+                try:
+                    events = json.load(f)
+                except json.JSONDecodeError:
+                    logger.error("Error reading events file")
+            
+            # Process events if any exist
+            if events:
+                for event in events:
+                    if event['type'] == 'file_received':
+                        filename = event['filename']
+                        file_path = os.path.join(UPLOAD_FOLDER, filename)
+                        if os.path.exists(file_path):
+                            open_file_with_default_app(file_path)
+                            #logger.info(f"Auto-opened file: {filename}")
+                
+                # Clear the events file in a separate operation
+                with open(EVENT_FILE, 'w') as f:
+                    json.dump([], f)
+                    f.flush()
+                    st.rerun(scope="app")  # Ensure the write is completed
+                    
+    except Exception as e:
+        logger.error(f"Error in auto_open_received_files: {str(e)}")
+        # Attempt to clear the file even if there was an error
+        try:
+            with open(EVENT_FILE, 'w') as f:
+                json.dump([], f)
+                f.flush()
+        except:
+            pass
+
 def main():
     # Process any new connections from the queue
     process_connection_queue()
@@ -727,6 +766,7 @@ def main():
     > 💡 For a complete list of supported formats and detailed documentation, 
     > visit the [documentation](documentation) page.
     """)
+    auto_open_received_files()
 
 if __name__ == "__main__":
     try:
