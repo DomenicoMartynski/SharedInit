@@ -112,7 +112,10 @@ def send_file_to_device(file_path, device_ip):
         url = f"http://{device_ip}:{FLASK_PORT}/upload"
         with open(file_path, 'rb') as f:
             files = {'file': f}
-            response = requests.post(url, files=files)
+            headers = {
+                'X-Downloads-Enabled': str(st.session_state.downloads_enabled).lower()
+            }
+            response = requests.post(url, files=files, headers=headers)
             if response.status_code == 200:
                 return True
             else:

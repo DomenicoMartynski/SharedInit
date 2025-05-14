@@ -99,18 +99,15 @@ def upload_file():
         return jsonify({'error': 'No selected file'}), 400
     
     try:
-        # Check if downloads are enabled by making a request to the downloads_enabled endpoint
+        # Check if downloads are enabled by checking the local state
         try:
-            response = requests.post(
-                f"http://localhost:{PORT}/downloads_enabled",
-                json={'downloads_enabled': True},
-                headers={'Content-Type': 'application/json'}
-            )
-            if response.status_code == 200:
-                data = response.json()
-                if not data.get('downloads_enabled', False):
-                    logger.info("Downloads are disabled, rejecting file upload")
-                    return jsonify({'message': 'Downloads are currently disabled'}), 403
+            # Read the current state from the request headers
+            downloads_enabled = request.headers.get('X-Downloads-Enabled', 'true').lower() == 'true'
+            logger.info(f"Local downloads_enabled state: {downloads_enabled}")
+            
+            if not downloads_enabled:
+                logger.info("Downloads are disabled, rejecting file upload")
+                return jsonify({'message': 'Downloads are currently disabled'}), 403
         except Exception as e:
             logger.error(f"Error checking downloads status: {str(e)}")
             return jsonify({'error': 'Failed to check downloads status'}), 500
