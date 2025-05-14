@@ -78,9 +78,21 @@ def check_downloads_enabled():
             logger.error(f"Failed to parse JSON: {str(e)}")
             return jsonify({'error': 'Invalid JSON data', 'downloads_enabled': False}), 400
         
-        downloads_enabled = data.get('downloads_enabled', False)
-        logger.info(f"Downloads enabled state: {downloads_enabled}")
+        # The downloads_enabled state is now determined by the local state
+        # We don't need to check the request data anymore
+        downloads_enabled = True  # Default to True if not specified
         
+        # Check if there's a local state file
+        state_file = "downloads_state.json"
+        if os.path.exists(state_file):
+            try:
+                with open(state_file, 'r') as f:
+                    state_data = json.load(f)
+                    downloads_enabled = state_data.get('downloads_enabled', True)
+            except Exception as e:
+                logger.error(f"Error reading state file: {str(e)}")
+        
+        logger.info(f"Local downloads enabled state: {downloads_enabled}")
         return jsonify({'downloads_enabled': downloads_enabled}), 200
     except Exception as e:
         logger.error(f"Error checking downloads status: {str(e)}")

@@ -502,9 +502,34 @@ def broadcast_file(file_path):
     status_text = st.empty()
     
     for i, (ip, device) in enumerate(st.session_state.active_connections.items()):
-        status_text.text(f"Sending to {device['hostname']} ({ip})...")
-        if send_file_to_device(file_path, ip):
-            success_count += 1
+        status_text.text(f"Checking {device['hostname']} ({ip})...")
+        
+        # First check if downloads are enabled on the receiver
+        try:
+            check_response = requests.post(
+                f"http://{ip}:{FLASK_PORT}/downloads_enabled",
+                json={'downloads_enabled': True},
+                headers={'Content-Type': 'application/json'}
+            )
+            
+            if check_response.status_code == 200:
+                data = check_response.json()
+                if not data.get('downloads_enabled', False):
+                    logger.info(f"Downloads disabled on {device['hostname']}, skipping...")
+                    continue
+            else:
+                logger.warning(f"Could not check downloads state on {device['hostname']}, skipping...")
+                continue
+                
+            # If downloads are enabled, send the file
+            status_text.text(f"Sending to {device['hostname']} ({ip})...")
+            if send_file_to_device(file_path, ip):
+                success_count += 1
+                
+        except Exception as e:
+            logger.error(f"Error checking/sending to {device['hostname']}: {str(e)}")
+            continue
+            
         progress_bar.progress((i + 1) / total_devices)
     
     progress_bar.empty()
@@ -512,8 +537,10 @@ def broadcast_file(file_path):
     
     if success_count == total_devices:
         st.success(f"Successfully sent file to all {total_devices} devices!")
-    else:
+    elif success_count > 0:
         st.warning(f"Sent file to {success_count} out of {total_devices} devices.")
+    else:
+        st.error("Could not send file to any devices.")
 
 def delete_file(file_path):
     """Delete a file and remove it from session state if it exists."""
@@ -574,37 +601,20 @@ def auto_open_received_files(auto_open_enabled):
 @st.fragment(run_every=1)
 def is_state_enabled(downloads_enabled):
     logger.info(f"Current downloads_enabled state: {downloads_enabled}")
+    
+    # Save state to file for Flask server to read
+    try:
+        with open("downloads_state.json", "w") as f:
+            json.dump({"downloads_enabled": downloads_enabled}, f)
+    except Exception as e:
+        logger.error(f"Error saving downloads state: {str(e)}")
+    
     st.markdown(
         f"""
         <script>
             // Add downloads_enabled state to the page
             const downloadsEnabled = {str(downloads_enabled).lower()};
             document.body.setAttribute('data-downloads-enabled', downloadsEnabled);
-            
-            // Send state to Flask server
-            const data = {{
-                downloads_enabled: downloadsEnabled
-            }};
-            
-            const requestOptions = {{
-                method: 'POST',
-                headers: {{
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json'
-                }},
-                body: JSON.stringify(data)
-            }};
-            
-            // Send the request
-            fetch("http://localhost:8502/downloads_enabled", requestOptions)
-                .then(response => {{
-                    if (!response.ok) {{
-                        throw new Error(`HTTP error! status: ${{response.status}}`);
-                    }}
-                    return response.json();
-                }})
-                .then(data => console.log('Success:', data))
-                .catch(error => console.error('Error:', error));
         </script>
         """,
         unsafe_allow_html=True
