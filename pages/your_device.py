@@ -6,9 +6,11 @@ import os
 import json
 import shutil
 import subprocess
+import requests
 
 # Constants
 PORT = 8501  # Streamlit default port
+FLASK_PORT = 8502  # Flask server port
 CONFIG_FILE = "app_config.json"
 
 def get_local_ip():
@@ -39,25 +41,28 @@ def save_config(config):
         json.dump(config, f)
 
 def change_download_folder(new_folder):
-    """Change the download folder and move existing files."""
+    """Change the download folder."""
     try:
         # Create new folder if it doesn't exist
         os.makedirs(new_folder, exist_ok=True)
-        
-        # Move existing files from old folder to new folder
-        old_folder = st.session_state.download_folder
-        if os.path.exists(old_folder):
-            for file in os.listdir(old_folder):
-                old_path = os.path.join(old_folder, file)
-                new_path = os.path.join(new_folder, file)
-                if os.path.isfile(old_path):
-                    shutil.move(old_path, new_path)
         
         # Update session state and config
         st.session_state.download_folder = new_folder
         config = load_config()
         config["download_folder"] = new_folder
         save_config(config)
+        
+        # Notify Flask server about the configuration change
+        try:
+            response = requests.post(
+                f"http://localhost:{FLASK_PORT}/update_config",
+                json={"download_folder": new_folder},
+                timeout=1
+            )
+            if response.status_code != 200:
+                st.warning("Flask server was notified but returned an error. Some features may not work until you restart the app.")
+        except Exception as e:
+            st.warning("Could not notify Flask server about the configuration change. Some features may not work until you restart the app.")
         
         return True
     except Exception as e:
@@ -81,9 +86,31 @@ def open_folder_picker():
         except Exception as e:
             st.error(f"Error opening folder picker: {str(e)}")
             return None
+    elif platform.system() == 'Windows':  # Windows
+        try:
+            # Use PowerShell command to show folder picker dialog
+            powershell_command = '''
+            Add-Type -AssemblyName System.Windows.Forms
+            $folderBrowser = New-Object System.Windows.Forms.FolderBrowserDialog
+            $folderBrowser.Description = "Select Download Folder"
+            $folderBrowser.RootFolder = "MyComputer"
+            if ($folderBrowser.ShowDialog() -eq "OK") {
+                $folderBrowser.SelectedPath
+            }
+            '''
+            result = subprocess.run(
+                ["powershell", "-Command", powershell_command],
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return os.path.normpath(result.stdout.strip())
+            return None
+        except Exception as e:
+            st.error(f"Error opening folder picker: {str(e)}")
+            return None
     else:
-        st.error("Folder picker is currently only supported on macOS")
-        return None
+        return None  # For other platforms, we'll use manual input
 
 def main():
     st.title("Your Device")
@@ -127,12 +154,32 @@ def main():
         current_folder = st.session_state.download_folder
         st.write(f"**Current Download Folder:** {os.path.abspath(current_folder)}")
         
-        if st.button("Choose New Download Folder"):
-            new_folder = open_folder_picker()
-            if new_folder and new_folder != current_folder:
-                if change_download_folder(new_folder):
-                    st.success(f"Download folder changed to: {os.path.abspath(new_folder)}")
-                    st.rerun()
+        # Add manual path input option
+        new_folder_path = st.text_input("Enter download folder path manually:", value=current_folder)
+        
+        col3, col4, col5 = st.columns([1, 1, 1])
+        with col3:
+            if st.button("Choose Folder (File Picker)"):
+                new_folder = open_folder_picker()
+                if new_folder and new_folder != current_folder:
+                    if change_download_folder(new_folder):
+                        st.success(f"Download folder changed to: {os.path.abspath(new_folder)}")
+                        st.rerun()
+        
+        with col4:
+            if st.button("Save Manual Path"):
+                if new_folder_path and new_folder_path != current_folder:
+                    if change_download_folder(new_folder_path):
+                        st.success(f"Download folder changed to: {os.path.abspath(new_folder_path)}")
+                        st.rerun()
+        
+        with col5:
+            if st.button("Reset to Default"):
+                default_folder = "downloads"
+                if current_folder != default_folder:
+                    if change_download_folder(default_folder):
+                        st.success(f"Download folder reset to default: {os.path.abspath(default_folder)}")
+                        st.rerun()
     
     with col2:
         st.markdown("#### Quick Actions")

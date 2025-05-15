@@ -622,7 +622,7 @@ def auto_open_received_files(auto_open_enabled):
 
 @st.fragment(run_every=1)
 def is_state_enabled(downloads_enabled):
-    logger.info(f"Current downloads_enabled state: {downloads_enabled}")
+    #logger.info(f"Current downloads_enabled state: {downloads_enabled}")
     
     # Save state to file for Flask server to read
     try:

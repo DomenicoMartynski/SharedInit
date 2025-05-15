@@ -162,6 +162,33 @@ def health_check():
     """Health check endpoint."""
     return jsonify({'status': 'healthy'}), 200
 
+@app.route('/update_config', methods=['POST'])
+def update_config():
+    """Update server configuration."""
+    try:
+        data = request.get_json()
+        if 'download_folder' in data:
+            new_folder = data['download_folder']
+            # Update the global UPLOAD_FOLDER
+            global UPLOAD_FOLDER
+            UPLOAD_FOLDER = new_folder
+            app.config['UPLOAD_FOLDER'] = new_folder
+            
+            # Ensure the folder exists
+            ensure_upload_folder()
+            
+            # Save the new configuration
+            config = load_config()
+            config['download_folder'] = new_folder
+            with open(CONFIG_FILE, 'w') as f:
+                json.dump(config, f)
+                
+            return jsonify({'message': 'Configuration updated successfully'}), 200
+        return jsonify({'error': 'Invalid configuration data'}), 400
+    except Exception as e:
+        logger.error(f"Error updating configuration: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
 if __name__ == '__main__':
     ensure_upload_folder()
     logger.info(f"Starting Flask server on port {PORT}")
