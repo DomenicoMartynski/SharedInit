@@ -4,3 +4,4 @@ received_files/*
 downloads/*
 .DS_Store
 rerun_signal.txt
+downloads_state.json

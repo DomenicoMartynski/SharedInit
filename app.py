@@ -780,7 +780,30 @@ def main():
     st.header("Connected Devices")
     if st.session_state.active_connections:
         for ip, device in st.session_state.active_connections.items():
-            st.write(f"📱 {device['hostname']} ({ip}) - {device['status']}")
+            # Get downloads state
+            downloads_state = "Unknown"
+            try:
+                response = requests.post(
+                    f"http://{ip}:8502/downloads_enabled",
+                    json={'downloads_enabled': True},
+                    headers={'Content-Type': 'application/json'},
+                    timeout=0.5
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    downloads_state = "Enabled" if data.get('downloads_enabled', False) else "Disabled"
+            except:
+                pass
+
+            # Create colored orb based on state
+            if downloads_state == "Enabled":
+                orb = "🟢"
+            elif downloads_state == "Disabled":
+                orb = "🔴"
+            else:
+                orb = "⚪"
+
+            st.write(f"📱 {device['hostname']} ({ip}) - {device['status']}, Downloads: {orb} {downloads_state}")
     else:
         st.info("No other devices connected. Start the app on other devices to enable file sharing.")
     
