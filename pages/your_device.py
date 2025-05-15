@@ -2,9 +2,14 @@ import streamlit as st
 import socket
 import platform
 from datetime import datetime
+import os
+import json
+import shutil
+import subprocess
 
 # Constants
 PORT = 8501  # Streamlit default port
+CONFIG_FILE = "app_config.json"
 
 def get_local_ip():
     """Get the local IP address of the machine."""
@@ -18,8 +23,75 @@ def get_local_ip():
         st.warning(f"Could not determine local IP: {str(e)}")
         return "127.0.0.1"
 
+def load_config():
+    """Load configuration from file."""
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r') as f:
+                return json.load(f)
+        except:
+            return {"download_folder": "downloads"}
+    return {"download_folder": "downloads"}
+
+def save_config(config):
+    """Save configuration to file."""
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump(config, f)
+
+def change_download_folder(new_folder):
+    """Change the download folder and move existing files."""
+    try:
+        # Create new folder if it doesn't exist
+        os.makedirs(new_folder, exist_ok=True)
+        
+        # Move existing files from old folder to new folder
+        old_folder = st.session_state.download_folder
+        if os.path.exists(old_folder):
+            for file in os.listdir(old_folder):
+                old_path = os.path.join(old_folder, file)
+                new_path = os.path.join(new_folder, file)
+                if os.path.isfile(old_path):
+                    shutil.move(old_path, new_path)
+        
+        # Update session state and config
+        st.session_state.download_folder = new_folder
+        config = load_config()
+        config["download_folder"] = new_folder
+        save_config(config)
+        
+        return True
+    except Exception as e:
+        st.error(f"Error changing download folder: {str(e)}")
+        return False
+
+def open_folder_picker():
+    """Open a folder picker dialog based on the operating system."""
+    if platform.system() == 'Darwin':  # macOS
+        try:
+            # Use osascript to show a folder picker dialog
+            script = '''
+            tell application "System Events"
+                activate
+                set folderPath to choose folder with prompt "Select Download Folder"
+                return POSIX path of folderPath
+            end tell
+            '''
+            folder_path = subprocess.check_output(['osascript', '-e', script]).decode().strip()
+            return folder_path
+        except Exception as e:
+            st.error(f"Error opening folder picker: {str(e)}")
+            return None
+    else:
+        st.error("Folder picker is currently only supported on macOS")
+        return None
+
 def main():
     st.title("Your Device")
+    
+    # Load configuration
+    config = load_config()
+    if 'download_folder' not in st.session_state:
+        st.session_state.download_folder = config.get("download_folder", "downloads")
     
     # Get local device information
     local_ip = get_local_ip()
@@ -49,6 +121,18 @@ def main():
         st.write(f"**Machine:** {platform.machine()}")
         st.write(f"**Processor:** {platform.processor()}")
         st.write(f"**Python Version:** {platform.python_version()}")
+        
+        # Add download folder configuration
+        st.markdown("#### Download Settings")
+        current_folder = st.session_state.download_folder
+        st.write(f"**Current Download Folder:** {os.path.abspath(current_folder)}")
+        
+        if st.button("Choose New Download Folder"):
+            new_folder = open_folder_picker()
+            if new_folder and new_folder != current_folder:
+                if change_download_folder(new_folder):
+                    st.success(f"Download folder changed to: {os.path.abspath(new_folder)}")
+                    st.rerun()
     
     with col2:
         st.markdown("#### Quick Actions")
@@ -64,6 +148,7 @@ def main():
         - Keep the app running to stay visible to other devices
         - Make sure your firewall allows connections on port 8501
         - Other devices can find you as long as you're on the same network
+        - Choose a download folder with sufficient storage space
         """)
     
     # Add a section for troubleshooting
@@ -75,6 +160,12 @@ def main():
         3. Try running the app with administrator privileges
         4. Check if your antivirus is not blocking the connection
         5. Restart the app if the issue persists
+        
+        If you have issues with the download folder:
+        1. Make sure the folder path is valid and accessible
+        2. Ensure you have write permissions for the folder
+        3. Check if there's enough disk space
+        4. Try using an absolute path if relative path doesn't work
         """)
 
 if __name__ == "__main__":

@@ -26,16 +26,32 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Constants
-UPLOAD_FOLDER = "downloads"
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_UPLOAD_FOLDER = os.path.join(PROJECT_ROOT, "downloads")
 MAX_FILE_SIZE = 200 * 1024 * 1024  # 200MB max file size
 STREAMLIT_PORT = 8501
 FLASK_PORT = 8502
 BROADCAST_INTERVAL = 10
 EVENT_FILE = "file_events.json"
+CONFIG_FILE = "app_config.json"
 
 # Create a thread-safe queue for communication
 connection_queue = queue.Queue()
 file_event_queue = queue.Queue()
+
+def load_config():
+    """Load configuration from file."""
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+                # If a custom folder is configured, use it
+                if "download_folder" in config:
+                    return config
+        except:
+            pass
+    # Return default configuration
+    return {"download_folder": DEFAULT_UPLOAD_FOLDER}
 
 # Initialize session state
 if 'active_connections' not in st.session_state:
@@ -58,6 +74,12 @@ if 'last_deletion_time' not in st.session_state:
     st.session_state.last_deletion_time = None
 if 'last_event_check' not in st.session_state:
     st.session_state.last_event_check = datetime.now()
+if 'download_folder' not in st.session_state:
+    config = load_config()
+    st.session_state.download_folder = config.get("download_folder", DEFAULT_UPLOAD_FOLDER)
+
+# Update UPLOAD_FOLDER to use the configured folder
+UPLOAD_FOLDER = st.session_state.download_folder
 
 def check_file_events():
     """Check for new file events."""
@@ -658,7 +680,7 @@ def main():
     st.info(f"Your local IP address: {local_ip}")
     st.info(f"Platform: {platform.system()} {platform.release()}")
     #Display received files with auto-refresh
-    st.header("Received Files")
+    st.header("Files Inside the Downloads Folder")
     
     # Check if the number of files has changed
     current_file_count = len(os.listdir(UPLOAD_FOLDER))

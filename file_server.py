@@ -14,11 +14,33 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Constants
-UPLOAD_FOLDER = "downloads"
+CONFIG_FILE = "app_config.json"
 MAX_FILE_SIZE = 200 * 1024 * 1024  # 200MB max file size
 PORT = 8502  # Different port from Streamlit
 EVENT_FILE = "file_events.json"  # File to store events for Streamlit to read
 STREAMLIT_PORT = 8501  # Port for Streamlit app
+
+# Get the project root directory
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_UPLOAD_FOLDER = os.path.join(PROJECT_ROOT, "downloads")
+
+def load_config():
+    """Load configuration from file."""
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+                # If a custom folder is configured, use it
+                if "download_folder" in config:
+                    return config
+        except:
+            pass
+    # Return default configuration
+    return {"download_folder": DEFAULT_UPLOAD_FOLDER}
+
+# Load the configured upload folder
+config = load_config()
+UPLOAD_FOLDER = config.get("download_folder", DEFAULT_UPLOAD_FOLDER)
 
 # Create Flask app
 app = Flask(__name__)
@@ -35,7 +57,6 @@ def ensure_upload_folder():
 def write_event(event):
     """Write an event to the event file."""
     try:
-        # Read existing events
         events = []
         if os.path.exists(EVENT_FILE):
             with open(EVENT_FILE, 'r') as f:
@@ -44,59 +65,26 @@ def write_event(event):
                 except json.JSONDecodeError:
                     events = []
         
-        # Add new event
         events.append(event)
         
-        # Write back to file
         with open(EVENT_FILE, 'w') as f:
             json.dump(events, f)
-            
-        logger.info(f"Saved file event: {event}")
-        print(f"Saved file event: {event}")
-            
+            f.flush()
     except Exception as e:
-        logger.error(f"Error saving file event: {str(e)}")
-        print(f"Error saving file event: {str(e)}")
+        logger.error(f"Error writing event: {str(e)}")
 
 @app.route('/downloads_enabled', methods=['POST'])
 def check_downloads_enabled():
-    """Check if downloads are enabled in the Streamlit app."""
+    """Check if downloads are enabled."""
     try:
-        logger.info(f"Received request headers: {dict(request.headers)}")
-        logger.info(f"Received request data: {request.get_data()}")
-        
-        # Check content type
-        if not request.headers.get('Content-Type', '').startswith('application/json'):
-            logger.error(f"Invalid Content-Type: {request.headers.get('Content-Type')}")
-            return jsonify({'error': 'Content-Type must be application/json', 'downloads_enabled': False}), 400
-            
-        # Try to get JSON data
-        try:
-            data = request.get_json(force=True)  # force=True to try parsing even if content-type is wrong
-            logger.info(f"Parsed JSON data: {data}")
-        except Exception as e:
-            logger.error(f"Failed to parse JSON: {str(e)}")
-            return jsonify({'error': 'Invalid JSON data', 'downloads_enabled': False}), 400
-        
-        # The downloads_enabled state is now determined by the local state
-        # We don't need to check the request data anymore
-        downloads_enabled = True  # Default to True if not specified
-        
-        # Check if there's a local state file
-        state_file = "downloads_state.json"
-        if os.path.exists(state_file):
-            try:
-                with open(state_file, 'r') as f:
-                    state_data = json.load(f)
-                    downloads_enabled = state_data.get('downloads_enabled', True)
-            except Exception as e:
-                logger.error(f"Error reading state file: {str(e)}")
-        
-        logger.info(f"Local downloads enabled state: {downloads_enabled}")
-        return jsonify({'downloads_enabled': downloads_enabled}), 200
+        if os.path.exists("downloads_state.json"):
+            with open("downloads_state.json", "r") as f:
+                state = json.load(f)
+                return jsonify({"downloads_enabled": state.get("downloads_enabled", True)})
+        return jsonify({"downloads_enabled": True})
     except Exception as e:
-        logger.error(f"Error checking downloads status: {str(e)}")
-        return jsonify({'error': str(e), 'downloads_enabled': False}), 500
+        logger.error(f"Error checking downloads state: {str(e)}")
+        return jsonify({"downloads_enabled": True})
 
 @app.route('/upload', methods=['POST'])
 def upload_file():

@@ -5,3 +5,4 @@ downloads/*
 .DS_Store
 rerun_signal.txt
 downloads_state.json
+app_config.json
