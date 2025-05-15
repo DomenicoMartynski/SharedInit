@@ -115,13 +115,29 @@ def check_app_instance(ip):
                         pass
             except:
                 pass
+
+            # Check downloads state
+            downloads_enabled = "Unknown"
+            try:
+                response = requests.post(
+                    f"http://{ip}:8502/downloads_enabled",
+                    json={'downloads_enabled': True},
+                    headers={'Content-Type': 'application/json'},
+                    timeout=0.5
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    downloads_enabled = "Enabled" if data.get('downloads_enabled', False) else "Disabled"
+            except:
+                pass
             
             return {
                 "ip": ip,
                 "hostname": hostname,
                 "status": "Online",
                 "last_seen": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "platform": platform_type
+                "platform": platform_type,
+                "downloads_enabled": downloads_enabled
             }
     except:
         pass
@@ -201,12 +217,15 @@ def main():
         with device_container:
             for ip, host in st.session_state.active_connections.items():
                 with st.expander(f"📱 {host['hostname']} ({host['ip']})"):
-                    col1, col2 = st.columns([2, 1])
+                    col1, col2, col3 = st.columns([2, 1, 1])
                     with col1:
                         st.write(f"**Status:** {host['status']}")
                         st.write(f"**Last Seen:** {host['last_seen']}")
                         st.write(f"**Platform:** {host['platform']}")
                     with col2:
+                        downloads_state = host.get('downloads_enabled', 'Unknown')
+                        st.write(f"**Downloads:** {downloads_state}")
+                    with col3:
                         if st.button("Connect", key=f"connect_{ip}"):
                             st.markdown(f"[Open Connection](http://{ip}:{PORT})")
     else:
