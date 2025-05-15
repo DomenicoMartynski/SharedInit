@@ -1,0 +1,14 @@
+[Unit]
+Description=SharedInit LAN File Sharing
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=ABSOLUTE_PATH_TO_APP_DIRECTORY
+ExecStart=/bin/bash launch_linux_background.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target 
