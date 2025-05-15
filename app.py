@@ -134,10 +134,7 @@ def send_file_to_device(file_path, device_ip):
         url = f"http://{device_ip}:{FLASK_PORT}/upload"
         with open(file_path, 'rb') as f:
             files = {'file': f}
-            headers = {
-                'X-Downloads-Enabled': str(st.session_state.downloads_enabled).lower()
-            }
-            response = requests.post(url, files=files, headers=headers)
+            response = requests.post(url, files=files)
             if response.status_code == 200:
                 return True
             else:
@@ -147,10 +144,9 @@ def send_file_to_device(file_path, device_ip):
         st.error(f"Error sending file to {device_ip}: {str(e)}")
         return False
 
-# Flask server is now handled by file_server.py
 # Configure Streamlit page
 st.set_page_config(
-    page_title="LAN File Sharing App",
+    page_title="SharedInit - LAN File Sharing App",
     page_icon="📁",
     layout="wide"
 )
@@ -658,7 +654,7 @@ def main():
     if os.path.exists(logo_path):
         st.image(logo_path, width=300)
     
-    st.title("LAN File Sharing App")
+    st.title("SharedInit - LAN File Sharing App")
     
     # Add toggle buttons
     col1, col2, col3 = st.columns(3)

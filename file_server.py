@@ -101,10 +101,13 @@ def upload_file():
     try:
         # Check if downloads are enabled by checking the local state
         try:
-            # Read the current state from the request headers
-            downloads_enabled = request.headers.get('X-Downloads-Enabled', 'true').lower() == 'true'
-            logger.info(f"Local downloads_enabled state: {downloads_enabled}")
-            
+            if os.path.exists("downloads_state.json"):
+                with open("downloads_state.json", "r") as f:
+                    state = json.load(f)
+                    downloads_enabled = state.get("downloads_enabled", True)
+            else:
+                downloads_enabled = True
+                
             if not downloads_enabled:
                 logger.info("Downloads are disabled, rejecting file upload")
                 return jsonify({'message': 'Downloads are currently disabled'}), 403
