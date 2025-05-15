@@ -112,7 +112,10 @@ def send_file_to_device(file_path, device_ip):
         url = f"http://{device_ip}:{FLASK_PORT}/upload"
         with open(file_path, 'rb') as f:
             files = {'file': f}
-            response = requests.post(url, files=files)
+            headers = {
+                'X-Downloads-Enabled': str(st.session_state.downloads_enabled).lower()
+            }
+            response = requests.post(url, files=files, headers=headers)
             if response.status_code == 200:
                 return True
             else:
@@ -499,9 +502,34 @@ def broadcast_file(file_path):
     status_text = st.empty()
     
     for i, (ip, device) in enumerate(st.session_state.active_connections.items()):
-        status_text.text(f"Sending to {device['hostname']} ({ip})...")
-        if send_file_to_device(file_path, ip):
-            success_count += 1
+        status_text.text(f"Checking {device['hostname']} ({ip})...")
+        
+        # First check if downloads are enabled on the receiver
+        try:
+            check_response = requests.post(
+                f"http://{ip}:{FLASK_PORT}/downloads_enabled",
+                json={'downloads_enabled': True},
+                headers={'Content-Type': 'application/json'}
+            )
+            
+            if check_response.status_code == 200:
+                data = check_response.json()
+                if not data.get('downloads_enabled', False):
+                    logger.info(f"Downloads disabled on {device['hostname']}, skipping...")
+                    continue
+            else:
+                logger.warning(f"Could not check downloads state on {device['hostname']}, skipping...")
+                continue
+                
+            # If downloads are enabled, send the file
+            status_text.text(f"Sending to {device['hostname']} ({ip})...")
+            if send_file_to_device(file_path, ip):
+                success_count += 1
+                
+        except Exception as e:
+            logger.error(f"Error checking/sending to {device['hostname']}: {str(e)}")
+            continue
+            
         progress_bar.progress((i + 1) / total_devices)
     
     progress_bar.empty()
@@ -509,8 +537,10 @@ def broadcast_file(file_path):
     
     if success_count == total_devices:
         st.success(f"Successfully sent file to all {total_devices} devices!")
-    else:
+    elif success_count > 0:
         st.warning(f"Sent file to {success_count} out of {total_devices} devices.")
+    else:
+        st.error("Could not send file to any devices.")
 
 def delete_file(file_path):
     """Delete a file and remove it from session state if it exists."""
@@ -530,7 +560,7 @@ def delete_file(file_path):
     return False
 
 @st.fragment(run_every=5)
-def auto_open_received_files():
+def auto_open_received_files(auto_open_enabled):
     """Check file_events.json every 5 seconds and open new files."""
     try:
         if os.path.exists(EVENT_FILE):
@@ -548,7 +578,7 @@ def auto_open_received_files():
                     if event['type'] == 'file_received':
                         filename = event['filename']
                         file_path = os.path.join(UPLOAD_FOLDER, filename)
-                        if os.path.exists(file_path):
+                        if os.path.exists(file_path) and auto_open_enabled:
                             open_file_with_default_app(file_path)
                             #logger.info(f"Auto-opened file: {filename}")
                 
@@ -568,6 +598,28 @@ def auto_open_received_files():
         except:
             pass
 
+@st.fragment(run_every=1)
+def is_state_enabled(downloads_enabled):
+    logger.info(f"Current downloads_enabled state: {downloads_enabled}")
+    
+    # Save state to file for Flask server to read
+    try:
+        with open("downloads_state.json", "w") as f:
+            json.dump({"downloads_enabled": downloads_enabled}, f)
+    except Exception as e:
+        logger.error(f"Error saving downloads state: {str(e)}")
+    
+    st.markdown(
+        f"""
+        <script>
+            // Add downloads_enabled state to the page
+            const downloadsEnabled = {str(downloads_enabled).lower()};
+            document.body.setAttribute('data-downloads-enabled', downloadsEnabled);
+        </script>
+        """,
+        unsafe_allow_html=True
+    )
+
 def main():
     # Process any new connections from the queue
     process_connection_queue()
@@ -585,6 +637,21 @@ def main():
         st.image(logo_path, width=300)
     
     st.title("LAN File Sharing App")
+    
+    # Add toggle buttons
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        sender_enabled = st.toggle("Enable File Sending", value=False, key="sender_toggle")
+    with col2:
+        auto_open_enabled = st.toggle("Auto-open Received Files", value=True, key="auto_open_toggle")
+    with col3:
+        if 'downloads_enabled' not in st.session_state:
+            st.session_state.downloads_enabled = True
+        downloads_enabled = st.toggle("Enable File Downloads", value=st.session_state.downloads_enabled, key="downloads_toggle")
+        st.session_state.downloads_enabled = downloads_enabled
+    
+    # Update the downloads_enabled state
+    is_state_enabled(st.session_state.downloads_enabled)
     
     # Display local IP address and platform
     local_ip = get_local_ip()
@@ -653,59 +720,62 @@ def main():
     if not os.path.exists(UPLOAD_FOLDER):
         os.makedirs(UPLOAD_FOLDER)
     
-    # File upload section
-    st.header("Send Files")
-    
-    # Define allowed file types in a more user-friendly way
-    allowed_types = {
-        "Adobe Files": ["psd", "ai", "indd", "pdf", "prproj", "aep", "lrcat", "sesx"],
-        "Microsoft Office": ["doc", "docx", "xls", "xlsx", "ppt", "pptx", "pub", "vsd", "mdb", "accdb", "one"],
-        "Autodesk": ["dwg", "dxf", "rvt", "rfa", "max", "ma", "mb", "ipt", "iam", "f3d", "nwd"],
-        "Images": ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "svg", "webp", "ico", "raw", "cr2", "nef", "arw", "dng"],
-        "Media": ["mp4", "avi", "mov", "wmv", "flv", "mkv", "mp3", "wav", "ogg", "flac", "m4a", "aac", "wma"],
-        "Archives": ["zip", "rar", "7z", "tar", "gz", "bz2"],
-        "Documents": ["txt", "rtf", "csv", "json", "xml", "html", "htm", "css", "js", "py", "java", "cpp", "c", "h", "sql"]
-    }
-    
-    # Flatten the allowed types for the actual file uploader
-    all_extensions = [ext for extensions in allowed_types.values() for ext in extensions]
-    
-    uploaded_file = st.file_uploader(
-        "Choose a file to send",
-        type=all_extensions,
-        accept_multiple_files=False,
-        key="file_uploader"
-    )
-    
-    if uploaded_file is not None:
-        try:
-            # Check file size
-            file_size = uploaded_file.size
-            if not is_file_size_allowed(file_size):
-                st.error(f"File size exceeds the maximum limit of {MAX_FILE_SIZE / (1024*1024)}MB")
-                return
+    # File upload section - only show if sender is enabled
+    if sender_enabled:
+        st.header("Send Files")
+        
+        # Define allowed file types in a more user-friendly way
+        allowed_types = {
+            "Adobe Files": ["psd", "ai", "indd", "pdf", "prproj", "aep", "lrcat", "sesx"],
+            "Microsoft Office": ["doc", "docx", "xls", "xlsx", "ppt", "pptx", "pub", "vsd", "mdb", "accdb", "one"],
+            "Autodesk": ["dwg", "dxf", "rvt", "rfa", "max", "ma", "mb", "ipt", "iam", "f3d", "nwd"],
+            "Images": ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "svg", "webp", "ico", "raw", "cr2", "nef", "arw", "dng"],
+            "Media": ["mp4", "avi", "mov", "wmv", "flv", "mkv", "mp3", "wav", "ogg", "flac", "m4a", "aac", "wma"],
+            "Archives": ["zip", "rar", "7z", "tar", "gz", "bz2"],
+            "Documents": ["txt", "rtf", "csv", "json", "xml", "html", "htm", "css", "js", "py", "java", "cpp", "c", "h", "sql"]
+        }
+        
+        # Flatten the allowed types for the actual file uploader
+        all_extensions = [ext for extensions in allowed_types.values() for ext in extensions]
+        
+        uploaded_file = st.file_uploader(
+            "Choose a file to send",
+            type=all_extensions,
+            accept_multiple_files=False,
+            key="file_uploader"
+        )
+        
+        if uploaded_file is not None:
+            try:
+                # Check file size
+                file_size = uploaded_file.size
+                if not is_file_size_allowed(file_size):
+                    st.error(f"File size exceeds the maximum limit of {MAX_FILE_SIZE / (1024*1024)}MB")
+                    return
 
-            # Get file extension
-            file_extension = get_file_extension(uploaded_file.name)
-            if file_extension[1:] not in all_extensions:
-                st.error(f"File type {file_extension} is not allowed")
-                return
+                # Get file extension
+                file_extension = get_file_extension(uploaded_file.name)
+                if file_extension[1:] not in all_extensions:
+                    st.error(f"File type {file_extension} is not allowed")
+                    return
 
-            # Save the uploaded file temporarily
-            temp_file_path = os.path.join(UPLOAD_FOLDER, uploaded_file.name)
-            with open(temp_file_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            
-            # Broadcast the file to all connected devices
-            broadcast_file(temp_file_path)
-            
-            # Remove the temporary file
-            os.remove(temp_file_path)
-            
-        except Exception as e:
-            st.error(f"Error uploading file: {str(e)}")
-            st.error("Please try again with a different file or check file permissions.")
-    
+                # Save the uploaded file temporarily
+                temp_file_path = os.path.join(UPLOAD_FOLDER, uploaded_file.name)
+                with open(temp_file_path, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+                
+                # Broadcast the file to all connected devices
+                broadcast_file(temp_file_path)
+                
+                # Remove the temporary file
+                os.remove(temp_file_path)
+                
+            except Exception as e:
+                st.error(f"Error uploading file: {str(e)}")
+                st.error("Please try again with a different file or check file permissions.")
+    else:
+        st.info("File sending is currently disabled. Enable it using the toggle above to send files.")
+
     # Display connected devices
     st.header("Connected Devices")
     if st.session_state.active_connections:
@@ -766,7 +836,10 @@ def main():
     > 💡 For a complete list of supported formats and detailed documentation, 
     > visit the [documentation](documentation) page.
     """)
-    auto_open_received_files()
+
+    # Only run auto_open_received_files if enabled
+    auto_open_received_files(auto_open_enabled)
+
 
 if __name__ == "__main__":
     try:
