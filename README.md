@@ -159,36 +159,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
    ```
 
 ### Windows
-1. Run `install_windows_autostart.bat` as administrator
-2. This will create a shortcut in your Windows Startup folder
-3. The app will start automatically when you log in
-4. To stop autostart:
-   - Open the Startup folder: `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`
-   - Delete the `SharedInit.lnk` shortcut
+1. Run `toggle_windows_autostart.bat` as administrator
+2. This will create a shortcut in your Windows Startup folder if autostart is not already enabled, or remove it if it is enabled
+3. The app will start automatically when you log in if autostart is enabled
+4. To stop autostart, simply run `toggle_windows_autostart.bat` again
 
 ### Linux
-1. Edit the `sharedinit.service` file and replace:
-   - `YOUR_USERNAME` with your Linux username
-   - `ABSOLUTE_PATH_TO_APP_DIRECTORY` with the full path to your app directory
-2. Copy the service file to systemd:
-   ```bash
-   sudo cp sharedinit.service /etc/systemd/system/
-   ```
-3. Enable and start the service:
-   ```bash
-   sudo systemctl daemon-reload
-   sudo systemctl enable sharedinit
-   sudo systemctl start sharedinit
-   ```
-4. To stop the service:
-   ```bash
-   sudo systemctl stop sharedinit
-   sudo systemctl disable sharedinit
-   ```
-
-Note: For all platforms, you can also manually start/stop the app by running the respective launcher:
-- macOS: `SharedInit - macOS Launcher.command`
-- Windows: `SharedInit - Windows Launcher.vbs`
-- Linux: `SharedInit - Linux Launcher.sh`
-
-Running the launcher while the app is running will stop it, and running it while the app is stopped will start it.
+1. Edit the `sharedinit.service`
