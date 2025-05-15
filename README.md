@@ -18,7 +18,6 @@ The application uses a modern microservices architecture:
 
 - **Streamlit Frontend** (`app.py`): Handles the user interface and file management
 - **Flask Backend** (`file_server.py`): Manages file uploads and processing
-- **Process Manager** (`sharedinit.py`): Coordinates and monitors both services
 
 ## Installation
 
@@ -82,7 +81,6 @@ streamlit run app.py
 SharedInit/
 ├── app.py              # Streamlit frontend application
 ├── file_server.py      # Flask backend for file handling
-├── sharedinit.py       # Main process manager
 ├── requirements.txt    # Python dependencies
 ├── downloads/         # Directory for received files
 └── img/              # Application images and assets
@@ -121,7 +119,8 @@ pip install -r requirements.txt
 
 3. Run the application in development mode:
 ```bash
-python sharedinit.py
+python file_server.py
+streamlit run app.py
 ```
 
 ## Contributing
