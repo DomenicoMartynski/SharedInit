@@ -16,8 +16,8 @@ if exist "%SHORTCUT_FILE%" (
     echo Set oWS = WScript.CreateObject("WScript.Shell") > CreateShortcut.vbs
     echo sLinkFile = "%SHORTCUT_FILE%" >> CreateShortcut.vbs
     echo Set oLink = oWS.CreateShortcut(sLinkFile) >> CreateShortcut.vbs
-    echo oLink.TargetPath = "%SCRIPT_DIR%SharedInit - Windows Launcher.bat" >> CreateShortcut.vbs
-    echo oLink.WorkingDirectory = "%SCRIPT_DIR%" >> CreateShortcut.vbs
+    echo oLink.TargetPath = """"%SCRIPT_DIR%SharedInit - Windows Launcher.bat"""" >> CreateShortcut.vbs
+    echo oLink.WorkingDirectory = """"%SCRIPT_DIR%"""" >> CreateShortcut.vbs
     echo oLink.Description = "SharedInit LAN File Sharing" >> CreateShortcut.vbs
     echo oLink.WindowStyle = 7 >> CreateShortcut.vbs
     echo oLink.Save >> CreateShortcut.vbs
@@ -29,4 +29,4 @@ if exist "%SHORTCUT_FILE%" (
     echo Autostart has been enabled. A shortcut has been created in the Windows Startup folder.
 )
 
-pause 
+pause
