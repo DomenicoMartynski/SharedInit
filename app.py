@@ -26,16 +26,32 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Constants
-UPLOAD_FOLDER = "downloads"
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_UPLOAD_FOLDER = os.path.join(PROJECT_ROOT, "downloads")
 MAX_FILE_SIZE = 200 * 1024 * 1024  # 200MB max file size
 STREAMLIT_PORT = 8501
 FLASK_PORT = 8502
 BROADCAST_INTERVAL = 10
 EVENT_FILE = "file_events.json"
+CONFIG_FILE = "app_config.json"
 
 # Create a thread-safe queue for communication
 connection_queue = queue.Queue()
 file_event_queue = queue.Queue()
+
+def load_config():
+    """Load configuration from file."""
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+                # If a custom folder is configured, use it
+                if "download_folder" in config:
+                    return config
+        except:
+            pass
+    # Return default configuration
+    return {"download_folder": DEFAULT_UPLOAD_FOLDER}
 
 # Initialize session state
 if 'active_connections' not in st.session_state:
@@ -58,6 +74,12 @@ if 'last_deletion_time' not in st.session_state:
     st.session_state.last_deletion_time = None
 if 'last_event_check' not in st.session_state:
     st.session_state.last_event_check = datetime.now()
+if 'download_folder' not in st.session_state:
+    config = load_config()
+    st.session_state.download_folder = config.get("download_folder", DEFAULT_UPLOAD_FOLDER)
+
+# Update UPLOAD_FOLDER to use the configured folder
+UPLOAD_FOLDER = st.session_state.download_folder
 
 def check_file_events():
     """Check for new file events."""
@@ -112,10 +134,7 @@ def send_file_to_device(file_path, device_ip):
         url = f"http://{device_ip}:{FLASK_PORT}/upload"
         with open(file_path, 'rb') as f:
             files = {'file': f}
-            headers = {
-                'X-Downloads-Enabled': str(st.session_state.downloads_enabled).lower()
-            }
-            response = requests.post(url, files=files, headers=headers)
+            response = requests.post(url, files=files)
             if response.status_code == 200:
                 return True
             else:
@@ -125,10 +144,9 @@ def send_file_to_device(file_path, device_ip):
         st.error(f"Error sending file to {device_ip}: {str(e)}")
         return False
 
-# Flask server is now handled by file_server.py
 # Configure Streamlit page
 st.set_page_config(
-    page_title="LAN File Sharing App",
+    page_title="SharedInit - LAN File Sharing App",
     page_icon="📁",
     layout="wide"
 )
@@ -600,7 +618,7 @@ def auto_open_received_files(auto_open_enabled):
 
 @st.fragment(run_every=1)
 def is_state_enabled(downloads_enabled):
-    logger.info(f"Current downloads_enabled state: {downloads_enabled}")
+    #logger.info(f"Current downloads_enabled state: {downloads_enabled}")
     
     # Save state to file for Flask server to read
     try:
@@ -636,7 +654,7 @@ def main():
     if os.path.exists(logo_path):
         st.image(logo_path, width=300)
     
-    st.title("LAN File Sharing App")
+    st.title("SharedInit - LAN File Sharing App")
     
     # Add toggle buttons
     col1, col2, col3 = st.columns(3)
@@ -658,7 +676,7 @@ def main():
     st.info(f"Your local IP address: {local_ip}")
     st.info(f"Platform: {platform.system()} {platform.release()}")
     #Display received files with auto-refresh
-    st.header("Received Files")
+    st.header("Files Inside the Downloads Folder")
     
     # Check if the number of files has changed
     current_file_count = len(os.listdir(UPLOAD_FOLDER))
