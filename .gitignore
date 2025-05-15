@@ -6,3 +6,4 @@ downloads/*
 rerun_signal.txt
 downloads_state.json
 app_config.json
+.app_running
