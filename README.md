@@ -168,9 +168,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 1. Edit the `sharedinit.service`
 
 
-### Known bugs:
+## Known bugs:
 
-## ⚠️ Troubleshooting: `Streamlit.exe` Not Found
+### ⚠️ Troubleshooting: `Streamlit.exe` Not Found
 
 If you encounter an error such as:
 
