@@ -166,3 +166,27 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ### Linux
 1. Edit the `sharedinit.service`
+
+
+### Known bugs:
+
+## ⚠️ Troubleshooting: `Streamlit.exe` Not Found
+
+If you encounter an error such as:
+
+>'.venv\Scripts\streamlit.exe' is not recognized as an internal or external command
+
+
+after running the `SharedInit - Platform Launcher` script, it likely means that the required Python dependencies (including Streamlit) were not installed correctly inside the virtual environment.
+
+### ✅ How to Fix It
+
+1. **Open Command Prompt (CMD)** — not PowerShell.
+2. **Manually activate the virtual environment**:
+
+> call .venv\Scripts\activate.bat
+Install the required Python packages:
+> pip install -r requirements.txt
+This will install all dependencies listed in requirements.txt and make sure streamlit.exe becomes available under .venv\Scripts\.
+
+Once this is done, you can rerun the launcher, and it should start the app without issues.
