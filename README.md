@@ -185,8 +185,11 @@ after running the `SharedInit - Platform Launcher` script, it likely means that 
 2. **Manually activate the virtual environment**:
 
 > call .venv\Scripts\activate.bat
+
 Install the required Python packages:
+
 > pip install -r requirements.txt
+
 This will install all dependencies listed in requirements.txt and make sure streamlit.exe becomes available under .venv\Scripts\.
 
 Once this is done, you can rerun the launcher, and it should start the app without issues.
