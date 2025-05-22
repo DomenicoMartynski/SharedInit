@@ -860,7 +860,34 @@ def main():
     st.info(f"Your local IP address: {local_ip}")
     st.info(f"Platform: {platform.system()} {platform.release()}")
     #Display received files with auto-refresh
-    st.header("Files Inside the Downloads Folder")
+    st.header("📁 Files Inside the Downloads Folder")
+    
+    # Add create folder functionality with improved styling
+    with st.container():
+        st.markdown("### Create New Folder")
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            new_folder_name = st.text_input(
+                "Enter folder name:",
+                key="new_folder_input",
+                placeholder="e.g., Documents, Images, etc."
+            )
+        with col2:
+            st.markdown("")  # Add some vertical spacing
+            if st.button("📁 Create Folder", key="create_folder_button", use_container_width=True):
+                if new_folder_name:
+                    try:
+                        # Create the new folder
+                        new_folder_path = os.path.join(UPLOAD_FOLDER, new_folder_name)
+                        os.makedirs(new_folder_path, exist_ok=True)
+                        st.success(f"✅ Created folder: {new_folder_name}")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error creating folder: {str(e)}")
+                else:
+                    st.warning("⚠️ Please enter a folder name")
+    
+    st.markdown("---")  # Add a separator
     
     # Check if the number of files has changed
     current_file_count = len(os.listdir(UPLOAD_FOLDER))
@@ -873,9 +900,9 @@ def main():
         time_diff = (datetime.now() - st.session_state.last_deletion_time).total_seconds()
         if time_diff < 5:  # Only show status for 5 seconds
             if 'error' in st.session_state.last_deletion_status:
-                st.error(st.session_state.last_deletion_status['error'])
+                st.error(f"❌ {st.session_state.last_deletion_status['error']}")
             elif 'success' in st.session_state.last_deletion_status:
-                st.success(st.session_state.last_deletion_status['success'])
+                st.success(f"✅ {st.session_state.last_deletion_status['success']}")
 
     def display_files_and_folders(path, level=0):
         """Recursively display files and folders with proper indentation."""
@@ -885,32 +912,96 @@ def main():
             relative_path = os.path.relpath(item_path, UPLOAD_FOLDER)
             
             if os.path.isdir(item_path):
-                # Display folder with indentation and download button
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    st.markdown(f"{'&nbsp;' * (level * 4)}📁 **{item}/**")
-                with col2:
-                    # Use the local device's LAN IP for the download link
-                    download_url = f"http://{local_ip}:8502/download/{relative_path}"
-                    st.markdown(f"[⬇️ Download Folder]({download_url})", unsafe_allow_html=True)
+                # Display folder with indentation and buttons
+                with st.container():
+                    col1, col2, col3 = st.columns([3, 1, 1])
+                    with col1:
+                        st.markdown(f"{'&nbsp;' * (level * 4)}📁 **{item}/**")
+                    with col2:
+                        # Use the local device's LAN IP for the download link
+                        download_url = f"http://{local_ip}:8502/download/{relative_path}"
+                        st.markdown(f"[⬇️ Download]({download_url})", unsafe_allow_html=True)
+                    with col3:
+                        if st.button("🗑️ Delete", key=f"delete_{relative_path}", use_container_width=True):
+                            try:
+                                shutil.rmtree(item_path)
+                                st.success(f"✅ Deleted folder: {item}")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ Error deleting folder: {str(e)}")
                 display_files_and_folders(item_path, level + 1)
             else:
                 # Display file with indentation
-                col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
-                with col1:
-                    st.markdown(f"{'&nbsp;' * (level * 4)}📄 {item}")
-                with col2:
-                    if st.button("Open", key=f"open_{relative_path}"):
-                        open_file_with_default_app(item_path)
-                with col3:
-                    if st.button("🗑️ Delete", key=f"delete_{relative_path}"):
-                        if delete_file(item_path):
-                            st.success(f"Deleted {item}")
+                with st.container():
+                    col1, col2, col3, col4, col5 = st.columns([3, 1, 1, 1, 1])
+                    with col1:
+                        st.markdown(f"{'&nbsp;' * (level * 4)}📄 {item}")
+                    with col2:
+                        if st.button("🔍 Open", key=f"open_{relative_path}", use_container_width=True):
+                            open_file_with_default_app(item_path)
+                    with col3:
+                        # Use the local device's LAN IP for the download link
+                        download_url = f"http://{local_ip}:8502/download/{relative_path}"
+                        if st.button("⬇️ Download", key=f"download_{relative_path}", use_container_width=True):
+                            st.markdown(f'<meta http-equiv="refresh" content="0;url={download_url}">', unsafe_allow_html=True)
+                    with col4:
+                        # Add move button
+                        if st.button("↔️ Move", key=f"move_{relative_path}", use_container_width=True):
+                            st.session_state[f"moving_{relative_path}"] = True
                             st.rerun()
-                with col4:
-                    # Use the local device's LAN IP for the download link
-                    download_url = f"http://{local_ip}:8502/download/{relative_path}"
-                    st.markdown(f"[⬇️ Download]({download_url})", unsafe_allow_html=True)
+                    with col5:
+                        if st.button("🗑️ Delete", key=f"delete_{relative_path}", use_container_width=True, type="primary"):
+                            if delete_file(item_path):
+                                st.success(f"✅ Deleted {item}")
+                                st.rerun()
+                
+                # Show move dialog if this file is being moved
+                if st.session_state.get(f"moving_{relative_path}", False):
+                    with st.container():
+                        st.markdown("---")
+                        st.markdown(f"### Moving: {item}")
+                        # Get all folders in the downloads directory
+                        all_folders = []
+                        for root, dirs, files in os.walk(UPLOAD_FOLDER):
+                            for dir_name in dirs:
+                                dir_path = os.path.join(root, dir_name)
+                                rel_path = os.path.relpath(dir_path, UPLOAD_FOLDER)
+                                all_folders.append(rel_path)
+                        
+                        # Add root directory as an option
+                        all_folders.insert(0, ".")
+                        
+                        # Create a selectbox for target folder
+                        target_folder = st.selectbox(
+                            "Select destination folder:",
+                            options=all_folders,
+                            key=f"move_select_{relative_path}"
+                        )
+                        
+                        col1, col2 = st.columns([1, 1])
+                        with col1:
+                            if st.button("✅ Confirm Move", key=f"confirm_move_{relative_path}", use_container_width=True):
+                                try:
+                                    # Get the target path
+                                    if target_folder == ".":
+                                        target_path = UPLOAD_FOLDER
+                                    else:
+                                        target_path = os.path.join(UPLOAD_FOLDER, target_folder)
+                                    
+                                    # Move the file
+                                    new_path = os.path.join(target_path, item)
+                                    shutil.move(item_path, new_path)
+                                    st.success(f"✅ Moved {item} to {target_folder}")
+                                    # Clear the moving state
+                                    st.session_state[f"moving_{relative_path}"] = False
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ Error moving file: {str(e)}")
+                        with col2:
+                            if st.button("❌ Cancel", key=f"cancel_move_{relative_path}", use_container_width=True):
+                                st.session_state[f"moving_{relative_path}"] = False
+                                st.rerun()
+                        st.markdown("---")
 
     # Display files and folders
     if os.path.exists(UPLOAD_FOLDER):
