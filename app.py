@@ -91,6 +91,9 @@ def check_file_events():
             logger.info(f"Received events from Flask: {events}")
             print(f"Received events from Flask: {events}")
             
+            # Check if any of the events are from a zip file
+            is_zip_event = any(event.get('filename', '').lower().endswith('.zip') for event in events)
+            
             # Process new events
             for event in events:
                 if event['type'] == 'file_received':
@@ -119,8 +122,8 @@ def check_file_events():
                     else:
                         st.toast(f"📥 New file received: {filename}")
                     
-                    # Only try to open non-script files
-                    if not is_script:
+                    # Only try to open non-script files if this wasn't from a zip
+                    if not is_script and not is_zip_event:
                         file_path = os.path.join(UPLOAD_FOLDER, filename)
                         logger.info(f"Attempting to open file: {file_path}")
                         print(f"Attempting to open file: {file_path}")
@@ -1028,7 +1031,7 @@ def main():
             downloads_state = "Unknown"
             try:
                 response = requests.post(
-                    f"http://{ip}:8502/downloads_enabled",
+                    f"http://{ip}:{FLASK_PORT}/downloads_enabled",
                     json={'downloads_enabled': True},
                     headers={'Content-Type': 'application/json'},
                     timeout=0.5
