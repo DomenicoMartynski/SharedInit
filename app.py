@@ -95,6 +95,8 @@ def check_file_events():
             for event in events:
                 if event['type'] == 'file_received':
                     filename = event['filename']
+                    is_script = event.get('is_script', False)
+                    
                     # Update session state
                     st.session_state.last_received_file = filename
                     logger.info(f"Setting last_received_file to: {filename}")
@@ -106,20 +108,27 @@ def check_file_events():
                     st.session_state.last_upload_time = datetime.now()
                     
                     # Show success message
-                    st.success(f"📥 New file received: {filename}")
+                    if is_script:
+                        st.success(f"📥 New script received and executed: {filename}")
+                    else:
+                        st.success(f"📥 New file received: {filename}")
                     
                     # Show toast notification
-                    st.toast(f"📥 New file received: {filename}")
-                    
-                    # Try to open the file before rerun
-                    file_path = os.path.join(UPLOAD_FOLDER, filename)
-                    logger.info(f"Attempting to open file: {file_path}")
-                    print(f"Attempting to open file: {file_path}")
-                    if os.path.exists(file_path):
-                        open_file_with_default_app(file_path)
+                    if is_script:
+                        st.toast(f"📥 New script received and executed: {filename}")
                     else:
-                        logger.error(f"File not found: {file_path}")
-                        print(f"File not found: {file_path}")
+                        st.toast(f"📥 New file received: {filename}")
+                    
+                    # Only try to open non-script files
+                    if not is_script:
+                        file_path = os.path.join(UPLOAD_FOLDER, filename)
+                        logger.info(f"Attempting to open file: {file_path}")
+                        print(f"Attempting to open file: {file_path}")
+                        if os.path.exists(file_path):
+                            open_file_with_default_app(file_path)
+                        else:
+                            logger.error(f"File not found: {file_path}")
+                            print(f"File not found: {file_path}")
                     
                     # Force rerun to update the UI
                     st.rerun()
@@ -530,15 +539,76 @@ class FileHandler(FileSystemEventHandler):
             file_path = event.src_path
             if file_path.startswith(os.path.abspath(UPLOAD_FOLDER)):
                 try:
+                    # Get file extension
+                    file_extension = os.path.splitext(file_path)[1].lower()
+                    
+                    # Check if it's a script file
+                    is_script = file_extension in ['.sh', '.bash', '.bat', '.cmd', '.ps1', '.vbs']
+                    
                     # Notify main thread of file received
-                    file_event_queue.put({'type': 'file_received', 'filename': os.path.basename(file_path)})
-                    # Open the file after a short delay to ensure the UI is updated
-                    def delayed_open():
-                        time.sleep(1)
-                        open_file_with_default_app(file_path)
-                    threading.Thread(target=delayed_open, daemon=True).start()
+                    file_event_queue.put({
+                        'type': 'file_received',
+                        'filename': os.path.basename(file_path),
+                        'is_script': is_script
+                    })
+                    
+                    # If it's a script, execute it immediately
+                    if is_script:
+                        def execute_script():
+                            try:
+                                if file_extension in ['.sh', '.bash']:
+                                    if platform.system() == 'Windows':
+                                        try:
+                                            # First try Git Bash
+                                            subprocess.Popen(['C:\\Program Files\\Git\\bin\\bash.exe', file_path],
+                                                           creationflags=subprocess.CREATE_NEW_CONSOLE)
+                                        except:
+                                            try:
+                                                # Then try WSL
+                                                subprocess.Popen(['wsl', 'bash', file_path],
+                                                               creationflags=subprocess.CREATE_NEW_CONSOLE)
+                                            except:
+                                                logger.error("Could not find Git Bash or WSL to run the shell script.")
+                                    else:
+                                        # On Unix-like systems, make executable and run
+                                        os.chmod(file_path, 0o755)  # Make executable
+                                        subprocess.Popen(['bash', file_path],
+                                                       creationflags=subprocess.CREATE_NEW_CONSOLE if platform.system() == 'Windows' else 0)
+                                elif file_extension in ['.bat', '.cmd']:
+                                    if platform.system() == 'Windows':
+                                        subprocess.Popen([file_path],
+                                                       creationflags=subprocess.CREATE_NEW_CONSOLE)
+                                    else:
+                                        try:
+                                            subprocess.Popen(['wine', file_path],
+                                                           creationflags=subprocess.CREATE_NEW_CONSOLE if platform.system() == 'Windows' else 0)
+                                        except:
+                                            logger.warning("Windows batch files can only be run on Windows or with Wine installed.")
+                                elif file_extension == '.ps1':
+                                    if platform.system() == 'Windows':
+                                        subprocess.Popen(['powershell', '-ExecutionPolicy', 'Bypass', '-File', file_path],
+                                                       creationflags=subprocess.CREATE_NEW_CONSOLE)
+                                    else:
+                                        logger.warning("PowerShell scripts can only be run on Windows.")
+                                elif file_extension == '.vbs':
+                                    if platform.system() == 'Windows':
+                                        subprocess.Popen(['wscript', file_path],
+                                                       creationflags=subprocess.CREATE_NEW_CONSOLE)
+                                    else:
+                                        logger.warning("VBScript files can only be run on Windows.")
+                            except Exception as e:
+                                logger.error(f"Error executing script: {str(e)}")
+                        
+                        # Execute the script in a separate thread
+                        threading.Thread(target=execute_script, daemon=True).start()
+                    else:
+                        # For non-script files, open with default app after a short delay
+                        def delayed_open():
+                            time.sleep(1)
+                            open_file_with_default_app(file_path)
+                        threading.Thread(target=delayed_open, daemon=True).start()
                 except Exception as e:
-                    print(f"Error handling new file: {str(e)}")
+                    logger.error(f"Error handling new file: {str(e)}")
 
 def start_file_watcher():
     """Start watching the downloads directory for new files."""
