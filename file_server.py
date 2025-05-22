@@ -117,8 +117,11 @@ def upload_file():
         
         ensure_upload_folder()
         
-        # Save the file
+        # Create the full path including any subdirectories
         file_path = os.path.join(UPLOAD_FOLDER, file.filename)
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        
+        # Save the file
         logger.info(f"Attempting to save file to: {os.path.abspath(file_path)}")
         file.save(file_path)
         logger.info(f"Successfully saved file to: {os.path.abspath(file_path)}")
@@ -194,12 +197,53 @@ def update_config():
 
 @app.route('/download/<path:filename>', methods=['GET'])
 def download_file(filename):
+    """Download a file or folder."""
     try:
-        # Only allow files from the configured upload folder
-        return send_from_directory(app.config['UPLOAD_FOLDER'], filename, as_attachment=True)
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        
+        # Check if path exists
+        if not os.path.exists(file_path):
+            return jsonify({'error': 'File or folder not found'}), 404
+            
+        # If it's a directory, create a zip file
+        if os.path.isdir(file_path):
+            import tempfile
+            import zipfile
+            
+            # Create a temporary zip file
+            temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix='.zip')
+            with zipfile.ZipFile(temp_zip.name, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                # Walk through the directory
+                for root, dirs, files in os.walk(file_path):
+                    for file in files:
+                        file_full_path = os.path.join(root, file)
+                        # Get the relative path for the file in the zip
+                        arcname = os.path.relpath(file_full_path, app.config['UPLOAD_FOLDER'])
+                        zipf.write(file_full_path, arcname)
+            
+            # Send the zip file
+            response = send_from_directory(
+                os.path.dirname(temp_zip.name),
+                os.path.basename(temp_zip.name),
+                as_attachment=True,
+                download_name=f"{os.path.basename(filename)}.zip"
+            )
+            
+            # Clean up the temporary file after sending
+            @response.call_on_close
+            def cleanup():
+                try:
+                    os.unlink(temp_zip.name)
+                except:
+                    pass
+                    
+            return response
+        else:
+            # For regular files, send as before
+            return send_from_directory(app.config['UPLOAD_FOLDER'], filename, as_attachment=True)
     except Exception as e:
-        logger.error(f"Error sending file {filename}: {str(e)}")
-        return jsonify({'error': f'Failed to download file: {str(e)}'}), 500
+        logger.error(f"Error sending file/folder {filename}: {str(e)}")
+        return jsonify({'error': f'Failed to download file/folder: {str(e)}'}), 500
 
 if __name__ == '__main__':
     ensure_upload_folder()

@@ -874,26 +874,38 @@ def main():
             elif 'success' in st.session_state.last_deletion_status:
                 st.success(st.session_state.last_deletion_status['success'])
 
-    files = os.listdir(UPLOAD_FOLDER)
-    
-    if files:
-        for file in files:
-            file_path = os.path.join(UPLOAD_FOLDER, file)
-            col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
-            with col1:
-                st.write(file)
-            with col2:
-                if st.button("Open", key=f"open_{file}"):
-                    open_file_with_default_app(file_path)
-            with col3:
-                if st.button("🗑️ Delete", key=f"delete_{file}"):
-                    if delete_file(file_path):
-                        st.success(f"Deleted {file}")
-                        st.rerun()
-            with col4:
-                # Use the local device's LAN IP for the download link
-                download_url = f"http://{local_ip}:8502/download/{file}"
-                st.markdown(f"[⬇️ Download]({download_url})", unsafe_allow_html=True)
+    def display_files_and_folders(path, level=0):
+        """Recursively display files and folders with proper indentation."""
+        items = os.listdir(path)
+        for item in items:
+            item_path = os.path.join(path, item)
+            relative_path = os.path.relpath(item_path, UPLOAD_FOLDER)
+            
+            if os.path.isdir(item_path):
+                # Display folder with indentation
+                st.markdown(f"{'&nbsp;' * (level * 4)}📁 **{item}/**")
+                display_files_and_folders(item_path, level + 1)
+            else:
+                # Display file with indentation
+                col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+                with col1:
+                    st.markdown(f"{'&nbsp;' * (level * 4)}📄 {item}")
+                with col2:
+                    if st.button("Open", key=f"open_{relative_path}"):
+                        open_file_with_default_app(item_path)
+                with col3:
+                    if st.button("🗑️ Delete", key=f"delete_{relative_path}"):
+                        if delete_file(item_path):
+                            st.success(f"Deleted {item}")
+                            st.rerun()
+                with col4:
+                    # Use the local device's LAN IP for the download link
+                    download_url = f"http://{local_ip}:8502/download/{relative_path}"
+                    st.markdown(f"[⬇️ Download]({download_url})", unsafe_allow_html=True)
+
+    # Display files and folders
+    if os.path.exists(UPLOAD_FOLDER):
+        display_files_and_folders(UPLOAD_FOLDER)
     else:
         st.info("No files have been transferred yet.")
 
@@ -962,7 +974,7 @@ def main():
         
         with st.form(key="file_upload_form"):
             uploaded_files = st.file_uploader(
-                "Choose files to send",
+                "Choose files or folders to send",
                 type=all_extensions,
                 accept_multiple_files=True,
                 key="file_uploader"
@@ -985,16 +997,17 @@ def main():
                             st.error(f"File type {file_extension} for {uploaded_file.name} is not allowed")
                             continue
 
-                        # Save the uploaded file temporarily
-                        temp_file_path = os.path.join(UPLOAD_FOLDER, uploaded_file.name)
-                        with open(temp_file_path, "wb") as f:
+                        # Create the full path including any subdirectories
+                        file_path = os.path.join(UPLOAD_FOLDER, uploaded_file.name)
+                        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+                        # Save the uploaded file
+                        with open(file_path, "wb") as f:
                             f.write(uploaded_file.getbuffer())
                         
                         # Send the file to selected devices only
-                        send_file_to_selected_devices(temp_file_path, st.session_state.selected_device_ips)
+                        send_file_to_selected_devices(file_path, st.session_state.selected_device_ips)
                         
-                        # Remove the temporary file
-                        os.remove(temp_file_path)
                     except Exception as e:
                         st.error(f"Error uploading file {uploaded_file.name}: {str(e)}")
                         st.error("Please try again with a different file or check file permissions.")
