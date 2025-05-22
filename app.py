@@ -882,8 +882,14 @@ def main():
             relative_path = os.path.relpath(item_path, UPLOAD_FOLDER)
             
             if os.path.isdir(item_path):
-                # Display folder with indentation
-                st.markdown(f"{'&nbsp;' * (level * 4)}📁 **{item}/**")
+                # Display folder with indentation and download button
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.markdown(f"{'&nbsp;' * (level * 4)}📁 **{item}/**")
+                with col2:
+                    # Use the local device's LAN IP for the download link
+                    download_url = f"http://{local_ip}:8502/download/{relative_path}"
+                    st.markdown(f"[⬇️ Download Folder]({download_url})", unsafe_allow_html=True)
                 display_files_and_folders(item_path, level + 1)
             else:
                 # Display file with indentation

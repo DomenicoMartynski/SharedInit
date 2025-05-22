@@ -199,10 +199,19 @@ def update_config():
 def download_file(filename):
     """Download a file or folder."""
     try:
-        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        # Convert URL-encoded backslashes to forward slashes
+        filename = filename.replace('\\', '/')
+        
+        # Normalize the path to prevent directory traversal
+        file_path = os.path.normpath(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+        
+        # Ensure the path is within the upload folder
+        if not os.path.abspath(file_path).startswith(os.path.abspath(app.config['UPLOAD_FOLDER'])):
+            return jsonify({'error': 'Access denied'}), 403
         
         # Check if path exists
         if not os.path.exists(file_path):
+            logger.error(f"File/folder not found: {file_path}")
             return jsonify({'error': 'File or folder not found'}), 404
             
         # If it's a directory, create a zip file
@@ -240,7 +249,9 @@ def download_file(filename):
             return response
         else:
             # For regular files, send as before
-            return send_from_directory(app.config['UPLOAD_FOLDER'], filename, as_attachment=True)
+            directory = os.path.dirname(file_path)
+            filename = os.path.basename(file_path)
+            return send_from_directory(directory, filename, as_attachment=True)
     except Exception as e:
         logger.error(f"Error sending file/folder {filename}: {str(e)}")
         return jsonify({'error': f'Failed to download file/folder: {str(e)}'}), 500
