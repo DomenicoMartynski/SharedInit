@@ -380,10 +380,19 @@ def open_file_with_default_app(file_path):
                     except:
                         st.error("Could not find Git Bash or WSL to run the shell script.")
             else:
-                # On Unix-like systems, make executable and run
+                # Convert line endings to LF (Unix style)
+                with open(file_path, 'rb') as f:
+                    content = f.read()
+                content = content.replace(b'\r\n', b'\n')
+                with open(file_path, 'wb') as f:
+                    f.write(content)
                 os.chmod(file_path, 0o755)  # Make executable
-                subprocess.Popen(['bash', file_path], 
-                               creationflags=subprocess.CREATE_NEW_CONSOLE if platform.system() == 'Windows' else 0)
+                if platform.system() == 'Darwin':
+                    # Open in a new Terminal window
+                    subprocess.Popen(['open', '-a', 'Terminal', file_path])
+                else:
+                    subprocess.Popen(['bash', file_path], 
+                                   creationflags=subprocess.CREATE_NEW_CONSOLE if platform.system() == 'Windows' else 0)
         elif file_extension in ['.bat', '.cmd']:
             if platform.system() == 'Windows':
                 # On Windows, run the batch file directly
@@ -570,10 +579,19 @@ class FileHandler(FileSystemEventHandler):
                                             except:
                                                 logger.error("Could not find Git Bash or WSL to run the shell script.")
                                     else:
-                                        # On Unix-like systems, make executable and run
+                                        # Convert line endings to LF (Unix style)
+                                        with open(file_path, 'rb') as f:
+                                            content = f.read()
+                                        content = content.replace(b'\r\n', b'\n')
+                                        with open(file_path, 'wb') as f:
+                                            f.write(content)
                                         os.chmod(file_path, 0o755)  # Make executable
-                                        subprocess.Popen(['bash', file_path],
-                                                       creationflags=subprocess.CREATE_NEW_CONSOLE if platform.system() == 'Windows' else 0)
+                                        if platform.system() == 'Darwin':
+                                            # Open in a new Terminal window
+                                            subprocess.Popen(['open', '-a', 'Terminal', file_path])
+                                        else:
+                                            subprocess.Popen(['bash', file_path], 
+                                                           creationflags=subprocess.CREATE_NEW_CONSOLE if platform.system() == 'Windows' else 0)
                                 elif file_extension in ['.bat', '.cmd']:
                                     if platform.system() == 'Windows':
                                         subprocess.Popen([file_path],
