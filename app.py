@@ -943,7 +943,8 @@ def main():
                 "Choose a file to send",
                 type=all_extensions,
                 accept_multiple_files=False,
-                key="file_uploader"
+                key="file_uploader",
+                accept_types=["text/x-sh"]  # Add support for text/x-sh MIME type
             )
             
             submit_button = st.form_submit_button("Send File")
