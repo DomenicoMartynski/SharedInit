@@ -352,12 +352,63 @@ def scan_network():
 def open_file_with_default_app(file_path):
     """Open a file with the default application based on the operating system."""
     try:
-        if platform.system() == 'Windows':
-            os.startfile(file_path)
-        elif platform.system() == 'Darwin':  # macOS
-            subprocess.run(['open', file_path])
-        else:  # Linux
-            subprocess.run(['xdg-open', file_path])
+        # Get file extension
+        file_extension = os.path.splitext(file_path)[1].lower()
+        
+        # Handle script files
+        if file_extension in ['.sh', '.bash']:
+            if platform.system() == 'Windows':
+                # On Windows, try to run with Git Bash or WSL
+                try:
+                    # First try Git Bash
+                    subprocess.Popen(['C:\\Program Files\\Git\\bin\\bash.exe', file_path], 
+                                   creationflags=subprocess.CREATE_NEW_CONSOLE)
+                except:
+                    try:
+                        # Then try WSL
+                        subprocess.Popen(['wsl', 'bash', file_path],
+                                       creationflags=subprocess.CREATE_NEW_CONSOLE)
+                    except:
+                        st.error("Could not find Git Bash or WSL to run the shell script.")
+            else:
+                # On Unix-like systems, make executable and run
+                os.chmod(file_path, 0o755)  # Make executable
+                subprocess.Popen(['bash', file_path], 
+                               creationflags=subprocess.CREATE_NEW_CONSOLE if platform.system() == 'Windows' else 0)
+        elif file_extension in ['.bat', '.cmd']:
+            if platform.system() == 'Windows':
+                # On Windows, run the batch file directly
+                subprocess.Popen([file_path], 
+                               creationflags=subprocess.CREATE_NEW_CONSOLE)
+            else:
+                # On Unix-like systems, try to run with wine
+                try:
+                    subprocess.Popen(['wine', file_path],
+                                   creationflags=subprocess.CREATE_NEW_CONSOLE if platform.system() == 'Windows' else 0)
+                except:
+                    st.warning("Windows batch files can only be run on Windows or with Wine installed.")
+        elif file_extension == '.ps1':
+            if platform.system() == 'Windows':
+                # On Windows, run with PowerShell
+                subprocess.Popen(['powershell', '-ExecutionPolicy', 'Bypass', '-File', file_path],
+                               creationflags=subprocess.CREATE_NEW_CONSOLE)
+            else:
+                st.warning("PowerShell scripts can only be run on Windows.")
+        elif file_extension == '.vbs':
+            if platform.system() == 'Windows':
+                # On Windows, run with wscript
+                subprocess.Popen(['wscript', file_path],
+                               creationflags=subprocess.CREATE_NEW_CONSOLE)
+            else:
+                st.warning("VBScript files can only be run on Windows.")
+        else:
+            # For all other files, use the default system behavior
+            if platform.system() == 'Windows':
+                os.startfile(file_path)
+            elif platform.system() == 'Darwin':  # macOS
+                subprocess.run(['open', file_path])
+            else:  # Linux
+                subprocess.run(['xdg-open', file_path])
     except Exception as e:
         st.error(f"Error opening file: {str(e)}")
 
@@ -560,6 +611,48 @@ def broadcast_file(file_path):
     else:
         st.error("Could not send file to any devices.")
 
+def send_file_to_selected_devices(file_path, selected_ips):
+    """Send a file to only the selected devices."""
+    if not selected_ips:
+        st.warning("No devices selected to send the file to.")
+        return
+    success_count = 0
+    total_devices = len(selected_ips)
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    for i, ip in enumerate(selected_ips):
+        device = st.session_state.active_connections.get(ip, {"hostname": ip})
+        status_text.text(f"Checking {device.get('hostname', ip)} ({ip})...")
+        try:
+            check_response = requests.post(
+                f"http://{ip}:{FLASK_PORT}/downloads_enabled",
+                json={'downloads_enabled': True},
+                headers={'Content-Type': 'application/json'}
+            )
+            if check_response.status_code == 200:
+                data = check_response.json()
+                if not data.get('downloads_enabled', False):
+                    logger.info(f"Downloads disabled on {device.get('hostname', ip)}, skipping...")
+                    continue
+            else:
+                logger.warning(f"Could not check downloads state on {device.get('hostname', ip)}, skipping...")
+                continue
+            status_text.text(f"Sending to {device.get('hostname', ip)} ({ip})...")
+            if send_file_to_device(file_path, ip):
+                success_count += 1
+        except Exception as e:
+            logger.error(f"Error checking/sending to {device.get('hostname', ip)}: {str(e)}")
+            continue
+        progress_bar.progress((i + 1) / total_devices)
+    progress_bar.empty()
+    status_text.empty()
+    if success_count == total_devices:
+        st.success(f"Successfully sent file to all {total_devices} selected devices!")
+    elif success_count > 0:
+        st.warning(f"Sent file to {success_count} out of {total_devices} selected devices.")
+    else:
+        st.error("Could not send file to any selected devices.")
+
 def delete_file(file_path):
     """Delete a file and remove it from session state if it exists."""
     try:
@@ -742,6 +835,24 @@ def main():
     if sender_enabled:
         st.header("Send Files")
         
+        # Device selection for sending
+        device_options = [
+            f"{device['hostname']} ({ip})" for ip, device in st.session_state.active_connections.items()
+        ]
+        device_ip_map = {
+            f"{device['hostname']} ({ip})": ip for ip, device in st.session_state.active_connections.items()
+        }
+        if device_options:
+            selected_devices = st.multiselect(
+                "Select devices to send file to:",
+                options=device_options,
+                default=device_options,  # default to all
+                key="selected_devices_multiselect"
+            )
+        else:
+            selected_devices = []
+        st.session_state.selected_device_ips = [device_ip_map[name] for name in selected_devices]
+        
         # Define allowed file types in a more user-friendly way
         allowed_types = {
             "Adobe Files": ["psd", "ai", "indd", "pdf", "prproj", "aep", "lrcat", "sesx"],
@@ -750,47 +861,54 @@ def main():
             "Images": ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "svg", "webp", "ico", "raw", "cr2", "nef", "arw", "dng"],
             "Media": ["mp4", "avi", "mov", "wmv", "flv", "mkv", "mp3", "wav", "ogg", "flac", "m4a", "aac", "wma"],
             "Archives": ["zip", "rar", "7z", "tar", "gz", "bz2"],
-            "Documents": ["txt", "rtf", "csv", "json", "xml", "html", "htm", "css", "js", "py", "java", "cpp", "c", "h", "sql"]
+            "Documents": ["txt", "rtf", "csv", "json", "xml", "html", "htm", "css", "js", "py", "java", "cpp", "c", "h", "sql"],
+            "Scripts": ["sh", "bash", "bat", "cmd", "ps1", "vbs"]  # Added script file types
         }
         
         # Flatten the allowed types for the actual file uploader
         all_extensions = [ext for extensions in allowed_types.values() for ext in extensions]
         
-        uploaded_file = st.file_uploader(
-            "Choose a file to send",
-            type=all_extensions,
-            accept_multiple_files=False,
-            key="file_uploader"
-        )
-        
-        if uploaded_file is not None:
-            try:
-                # Check file size
-                file_size = uploaded_file.size
-                if not is_file_size_allowed(file_size):
-                    st.error(f"File size exceeds the maximum limit of {MAX_FILE_SIZE / (1024*1024)}MB")
-                    return
+        with st.form(key="file_upload_form"):
+            uploaded_file = st.file_uploader(
+                "Choose a file to send",
+                type=all_extensions,
+                accept_multiple_files=False,
+                key="file_uploader"
+            )
+            
+            submit_button = st.form_submit_button("Send File")
+            
+            if submit_button and uploaded_file is not None:
+                try:
+                    # Check file size
+                    file_size = uploaded_file.size
+                    if not is_file_size_allowed(file_size):
+                        st.error(f"File size exceeds the maximum limit of {MAX_FILE_SIZE / (1024*1024)}MB")
+                        st.stop()
 
-                # Get file extension
-                file_extension = get_file_extension(uploaded_file.name)
-                if file_extension[1:] not in all_extensions:
-                    st.error(f"File type {file_extension} is not allowed")
-                    return
+                    # Get file extension
+                    file_extension = get_file_extension(uploaded_file.name)
+                    if file_extension[1:] not in all_extensions:
+                        st.error(f"File type {file_extension} is not allowed")
+                        st.stop()
 
-                # Save the uploaded file temporarily
-                temp_file_path = os.path.join(UPLOAD_FOLDER, uploaded_file.name)
-                with open(temp_file_path, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
-                
-                # Broadcast the file to all connected devices
-                broadcast_file(temp_file_path)
-                
-                # Remove the temporary file
-                os.remove(temp_file_path)
-                
-            except Exception as e:
-                st.error(f"Error uploading file: {str(e)}")
-                st.error("Please try again with a different file or check file permissions.")
+                    # Save the uploaded file temporarily
+                    temp_file_path = os.path.join(UPLOAD_FOLDER, uploaded_file.name)
+                    with open(temp_file_path, "wb") as f:
+                        f.write(uploaded_file.getbuffer())
+                    
+                    # Send the file to selected devices only
+                    send_file_to_selected_devices(temp_file_path, st.session_state.selected_device_ips)
+                    
+                    # Remove the temporary file
+                    os.remove(temp_file_path)
+                    
+                    # Clear the form
+                    st.form_submit_button("Send Another File")
+                    
+                except Exception as e:
+                    st.error(f"Error uploading file: {str(e)}")
+                    st.error("Please try again with a different file or check file permissions.")
     else:
         st.info("File sending is currently disabled. Enable it using the toggle above to send files.")
 
