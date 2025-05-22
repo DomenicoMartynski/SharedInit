@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import os
 import logging
@@ -191,6 +191,15 @@ def update_config():
     except Exception as e:
         logger.error(f"Error updating configuration: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+@app.route('/download/<path:filename>', methods=['GET'])
+def download_file(filename):
+    try:
+        # Only allow files from the configured upload folder
+        return send_from_directory(app.config['UPLOAD_FOLDER'], filename, as_attachment=True)
+    except Exception as e:
+        logger.error(f"Error sending file {filename}: {str(e)}")
+        return jsonify({'error': f'Failed to download file: {str(e)}'}), 500
 
 if __name__ == '__main__':
     ensure_upload_folder()

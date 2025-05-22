@@ -879,7 +879,7 @@ def main():
     if files:
         for file in files:
             file_path = os.path.join(UPLOAD_FOLDER, file)
-            col1, col2, col3 = st.columns([3, 1, 1])
+            col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
             with col1:
                 st.write(file)
             with col2:
@@ -890,6 +890,10 @@ def main():
                     if delete_file(file_path):
                         st.success(f"Deleted {file}")
                         st.rerun()
+            with col4:
+                # Use the local device's LAN IP for the download link
+                download_url = f"http://{local_ip}:8502/download/{file}"
+                st.markdown(f"[⬇️ Download]({download_url})", unsafe_allow_html=True)
     else:
         st.info("No files have been transferred yet.")
 
@@ -957,46 +961,43 @@ def main():
         all_extensions = [ext for extensions in allowed_types.values() for ext in extensions]
         
         with st.form(key="file_upload_form"):
-            uploaded_file = st.file_uploader(
-                "Choose a file to send",
+            uploaded_files = st.file_uploader(
+                "Choose files to send",
                 type=all_extensions,
-                accept_multiple_files=False,
+                accept_multiple_files=True,
                 key="file_uploader"
             )
             
-            submit_button = st.form_submit_button("Send File")
+            submit_button = st.form_submit_button("Send Files")
             
-            if submit_button and uploaded_file is not None:
-                try:
-                    # Check file size
-                    file_size = uploaded_file.size
-                    if not is_file_size_allowed(file_size):
-                        st.error(f"File size exceeds the maximum limit of {MAX_FILE_SIZE / (1024*1024)}MB")
-                        st.stop()
+            if submit_button and uploaded_files:
+                for uploaded_file in uploaded_files:
+                    try:
+                        # Check file size
+                        file_size = uploaded_file.size
+                        if not is_file_size_allowed(file_size):
+                            st.error(f"File size of {uploaded_file.name} exceeds the maximum limit of {MAX_FILE_SIZE / (1024*1024)}MB")
+                            continue
 
-                    # Get file extension
-                    file_extension = get_file_extension(uploaded_file.name)
-                    if file_extension[1:] not in all_extensions:
-                        st.error(f"File type {file_extension} is not allowed")
-                        st.stop()
+                        # Get file extension
+                        file_extension = get_file_extension(uploaded_file.name)
+                        if file_extension[1:] not in all_extensions:
+                            st.error(f"File type {file_extension} for {uploaded_file.name} is not allowed")
+                            continue
 
-                    # Save the uploaded file temporarily
-                    temp_file_path = os.path.join(UPLOAD_FOLDER, uploaded_file.name)
-                    with open(temp_file_path, "wb") as f:
-                        f.write(uploaded_file.getbuffer())
-                    
-                    # Send the file to selected devices only
-                    send_file_to_selected_devices(temp_file_path, st.session_state.selected_device_ips)
-                    
-                    # Remove the temporary file
-                    os.remove(temp_file_path)
-                    
-                    # Clear the form
-                    st.form_submit_button("Send Another File")
-                    
-                except Exception as e:
-                    st.error(f"Error uploading file: {str(e)}")
-                    st.error("Please try again with a different file or check file permissions.")
+                        # Save the uploaded file temporarily
+                        temp_file_path = os.path.join(UPLOAD_FOLDER, uploaded_file.name)
+                        with open(temp_file_path, "wb") as f:
+                            f.write(uploaded_file.getbuffer())
+                        
+                        # Send the file to selected devices only
+                        send_file_to_selected_devices(temp_file_path, st.session_state.selected_device_ips)
+                        
+                        # Remove the temporary file
+                        os.remove(temp_file_path)
+                    except Exception as e:
+                        st.error(f"Error uploading file {uploaded_file.name}: {str(e)}")
+                        st.error("Please try again with a different file or check file permissions.")
     else:
         st.info("File sending is currently disabled. Enable it using the toggle above to send files.")
 
