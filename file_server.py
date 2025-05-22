@@ -126,7 +126,60 @@ def upload_file():
         file.save(file_path)
         logger.info(f"Successfully saved file to: {os.path.abspath(file_path)}")
         
-        # Write file received event
+        # Check if it's a zip file and extract it
+        if file.filename.lower().endswith('.zip'):
+            try:
+                import zipfile
+                import shutil
+                
+                # Create a temporary directory for extraction
+                temp_dir = os.path.join(UPLOAD_FOLDER, f"temp_extract_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+                os.makedirs(temp_dir, exist_ok=True)
+                
+                # Extract the zip file
+                with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                    zip_ref.extractall(temp_dir)
+                
+                # Move extracted files to their final location
+                for root, dirs, files in os.walk(temp_dir):
+                    for dir_name in dirs:
+                        src_dir = os.path.join(root, dir_name)
+                        dst_dir = os.path.join(UPLOAD_FOLDER, os.path.relpath(src_dir, temp_dir))
+                        os.makedirs(dst_dir, exist_ok=True)
+                    
+                    for file_name in files:
+                        src_file = os.path.join(root, file_name)
+                        dst_file = os.path.join(UPLOAD_FOLDER, os.path.relpath(src_file, temp_dir))
+                        os.makedirs(os.path.dirname(dst_file), exist_ok=True)
+                        shutil.move(src_file, dst_file)
+                
+                # Clean up
+                shutil.rmtree(temp_dir)
+                os.remove(file_path)  # Remove the original zip file
+                
+                # Write file received event for each extracted file
+                for root, dirs, files in os.walk(UPLOAD_FOLDER):
+                    for file_name in files:
+                        relative_path = os.path.relpath(os.path.join(root, file_name), UPLOAD_FOLDER)
+                        write_event({
+                            'type': 'file_received',
+                            'filename': relative_path,
+                            'timestamp': datetime.now().isoformat()
+                        })
+                
+                return jsonify({'message': 'Zip file extracted successfully'}), 200
+                
+            except Exception as e:
+                logger.error(f"Error extracting zip file: {str(e)}")
+                # If extraction fails, keep the zip file
+                write_event({
+                    'type': 'file_received',
+                    'filename': file.filename,
+                    'timestamp': datetime.now().isoformat()
+                })
+                return jsonify({'message': 'File uploaded successfully (extraction failed)'}), 200
+        
+        # Write file received event for non-zip files
         write_event({
             'type': 'file_received',
             'filename': file.filename,
