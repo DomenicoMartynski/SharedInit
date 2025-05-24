@@ -17,6 +17,8 @@ import queue
 import ipaddress
 import concurrent.futures
 import logging
+import sys
+import site
 
 # Configure logging
 logging.basicConfig(
@@ -38,6 +40,138 @@ CONFIG_FILE = "app_config.json"
 # Create a thread-safe queue for communication
 connection_queue = queue.Queue()
 file_event_queue = queue.Queue()
+
+def install_matlab_engine():
+    """Install MATLAB Engine API for Python in the virtual environment."""
+    try:
+        # Check multiple possible MATLAB installation paths
+        possible_paths = []
+        
+        if platform.system() == 'Windows':
+            possible_paths = [
+                r"C:\Program Files\MATLAB",
+                r"C:\Program Files (x86)\MATLAB",
+                os.path.expanduser("~\\AppData\\Local\\Programs\\MATLAB")
+            ]
+        elif platform.system() == 'Darwin':  # macOS
+            possible_paths = [
+                "/Applications/MATLAB",
+                os.path.expanduser("~/Applications/MATLAB"),
+                "/usr/local/MATLAB"
+            ]
+        else:  # Linux
+            possible_paths = [
+                "/usr/local/MATLAB",
+                "/opt/MATLAB",
+                os.path.expanduser("~/MATLAB")
+            ]
+        
+        # Add environment variable path if set
+        matlab_env_path = os.environ.get('MATLAB_HOME')
+        if matlab_env_path:
+            possible_paths.insert(0, matlab_env_path)
+        
+        matlab_path = None
+        for path in possible_paths:
+            if os.path.exists(path):
+                matlab_path = path
+                break
+        
+        if not matlab_path:
+            logger.warning("MATLAB installation not found in any standard location")
+            logger.info("Please ensure MATLAB is installed and set the MATLAB_HOME environment variable to your MATLAB installation path")
+            return False
+        
+        # Find the latest MATLAB version
+        matlab_versions = []
+        for item in os.listdir(matlab_path):
+            item_path = os.path.join(matlab_path, item)
+            if os.path.isdir(item_path) and (item.startswith('R') or item.startswith('matlab')):
+                matlab_versions.append(item)
+        
+        if not matlab_versions:
+            logger.warning(f"No MATLAB versions found in {matlab_path}")
+            return False
+        
+        # Sort versions and get the latest
+        latest_version = sorted(matlab_versions)[-1]
+        engine_path = os.path.join(matlab_path, latest_version, 'extern', 'engines', 'python')
+        
+        if not os.path.exists(engine_path):
+            logger.warning(f"MATLAB Engine API not found in {engine_path}")
+            return False
+        
+        # Get the Python executable path
+        python_exe = sys.executable
+        
+        # Install MATLAB Engine API
+        try:
+            logger.info(f"Installing MATLAB Engine API from {engine_path}")
+            result = subprocess.run(
+                [python_exe, 'setup.py', 'install'],
+                cwd=engine_path,
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            logger.info("Successfully installed MATLAB Engine API")
+            logger.debug(f"Installation output: {result.stdout}")
+            return True
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Error installing MATLAB Engine API: {e.stderr}")
+            logger.error(f"Command output: {e.stdout}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Error during MATLAB Engine API installation: {str(e)}")
+        return False
+
+# Initialize MATLAB engine
+MATLAB_AVAILABLE = False
+matlab_engine = None
+
+try:
+    import matlab.engine
+    matlab_engine = matlab.engine.start_matlab()
+    MATLAB_AVAILABLE = True
+    logger.info("Successfully initialized MATLAB engine")
+except ImportError:
+    logger.info("MATLAB Engine API not found. Attempting to install...")
+    if install_matlab_engine():
+        try:
+            # Reload site packages to ensure the new installation is recognized
+            import site
+            site.main()
+            
+            import matlab.engine
+            matlab_engine = matlab.engine.start_matlab()
+            MATLAB_AVAILABLE = True
+            logger.info("Successfully initialized MATLAB engine after installation")
+        except Exception as e:
+            logger.error(f"Failed to initialize MATLAB after installation: {str(e)}")
+    else:
+        logger.warning("Failed to install MATLAB Engine API. MATLAB functionality will be disabled.")
+except Exception as e:
+    logger.warning(f"MATLAB engine initialization failed: {str(e)}")
+    logger.warning("MATLAB functionality will be disabled.")
+
+def execute_matlab_script(script_path):
+    """Execute a MATLAB script file."""
+    if not MATLAB_AVAILABLE:
+        st.error("MATLAB engine is not available. Please ensure MATLAB is installed and properly configured.")
+        return False
+    
+    try:
+        # Get the directory of the script
+        script_dir = os.path.dirname(script_path)
+        # Change MATLAB's current directory to the script's directory
+        matlab_engine.cd(script_dir)
+        # Execute the script
+        matlab_engine.run(script_path)
+        return True
+    except Exception as e:
+        st.error(f"Error executing MATLAB script: {str(e)}")
+        return False
 
 def load_config():
     """Load configuration from file."""
@@ -362,74 +496,31 @@ def scan_network():
     return active_hosts
 
 def open_file_with_default_app(file_path):
-    """Open a file with the default application based on the operating system."""
+    """Open a file with the default application based on its type."""
     try:
-        # Get file extension
-        file_extension = os.path.splitext(file_path)[1].lower()
+        if not os.path.exists(file_path):
+            st.error(f"File not found: {file_path}")
+            return
+
+        file_extension = get_file_extension(file_path).lower()
         
-        # Handle script files
-        if file_extension in ['.sh', '.bash']:
-            if platform.system() == 'Windows':
-                # On Windows, try to run with Git Bash or WSL
-                try:
-                    # First try Git Bash
-                    subprocess.Popen(['C:\\Program Files\\Git\\bin\\bash.exe', file_path], 
-                                   creationflags=subprocess.CREATE_NEW_CONSOLE)
-                except:
-                    try:
-                        # Then try WSL
-                        subprocess.Popen(['wsl', 'bash', file_path],
-                                       creationflags=subprocess.CREATE_NEW_CONSOLE)
-                    except:
-                        st.error("Could not find Git Bash or WSL to run the shell script.")
+        # Handle MATLAB files
+        if file_extension == '.m':
+            if MATLAB_AVAILABLE:
+                if execute_matlab_script(file_path):
+                    st.success(f"Successfully executed MATLAB script: {os.path.basename(file_path)}")
+                return
             else:
-                # Convert line endings to LF (Unix style)
-                with open(file_path, 'rb') as f:
-                    content = f.read()
-                content = content.replace(b'\r\n', b'\n')
-                with open(file_path, 'wb') as f:
-                    f.write(content)
-                os.chmod(file_path, 0o755)  # Make executable
-                if platform.system() == 'Darwin':
-                    # Open in a new Terminal window
-                    subprocess.Popen(['open', '-a', 'Terminal', file_path])
-                else:
-                    subprocess.Popen(['bash', file_path], 
-                                   creationflags=subprocess.CREATE_NEW_CONSOLE if platform.system() == 'Windows' else 0)
-        elif file_extension in ['.bat', '.cmd']:
-            if platform.system() == 'Windows':
-                # On Windows, run the batch file directly
-                subprocess.Popen([file_path], 
-                               creationflags=subprocess.CREATE_NEW_CONSOLE)
-            else:
-                # On Unix-like systems, try to run with wine
-                try:
-                    subprocess.Popen(['wine', file_path],
-                                   creationflags=subprocess.CREATE_NEW_CONSOLE if platform.system() == 'Windows' else 0)
-                except:
-                    st.warning("Windows batch files can only be run on Windows or with Wine installed.")
-        elif file_extension == '.ps1':
-            if platform.system() == 'Windows':
-                # On Windows, run with PowerShell
-                subprocess.Popen(['powershell', '-ExecutionPolicy', 'Bypass', '-File', file_path],
-                               creationflags=subprocess.CREATE_NEW_CONSOLE)
-            else:
-                st.warning("PowerShell scripts can only be run on Windows.")
-        elif file_extension == '.vbs':
-            if platform.system() == 'Windows':
-                # On Windows, run with wscript
-                subprocess.Popen(['wscript', file_path],
-                               creationflags=subprocess.CREATE_NEW_CONSOLE)
-            else:
-                st.warning("VBScript files can only be run on Windows.")
-        else:
-            # For all other files, use the default system behavior
-            if platform.system() == 'Windows':
-                os.startfile(file_path)
-            elif platform.system() == 'Darwin':  # macOS
-                subprocess.run(['open', file_path])
-            else:  # Linux
-                subprocess.run(['xdg-open', file_path])
+                st.warning("MATLAB is not available. Opening file in default editor instead.")
+        
+        # Handle other file types
+        if platform.system() == 'Darwin':  # macOS
+            subprocess.run(['open', file_path])
+        elif platform.system() == 'Windows':
+            os.startfile(file_path)
+        else:  # Linux
+            subprocess.run(['xdg-open', file_path])
+            
     except Exception as e:
         st.error(f"Error opening file: {str(e)}")
 
@@ -646,8 +737,12 @@ def is_file_size_allowed(file_size):
     return file_size <= MAX_FILE_SIZE
 
 def get_file_extension(filename):
-    """Get the file extension from filename."""
+    """Get the file extension in lowercase."""
     return os.path.splitext(filename)[1].lower()
+
+def is_matlab_file(filename):
+    """Check if the file is a MATLAB file."""
+    return get_file_extension(filename) == '.m'
 
 def broadcast_file(file_path):
     """Send a file to all connected devices."""
