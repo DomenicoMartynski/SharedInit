@@ -661,17 +661,40 @@ class FileHandler(FileSystemEventHandler):
                             try:
                                 if file_extension in ['.sh', '.bash']:
                                     if platform.system() == 'Windows':
-                                        try:
-                                            # First try Git Bash
-                                            subprocess.Popen(['C:\\Program Files\\Git\\bin\\bash.exe', '-c', f'cd "{os.path.dirname(file_path)}" && ./{os.path.basename(file_path)} && echo "Press Enter to close..." && read'],
-                                                           creationflags=subprocess.CREATE_NEW_CONSOLE)
-                                        except:
+                                        # Create a temporary batch file to run the bash script
+                                        temp_batch = os.path.join(os.path.dirname(file_path), 'run_script.bat')
+                                        with open(temp_batch, 'w') as f:
+                                            f.write('@echo off\n')
+                                            f.write('echo Running script...\n')
+                                            f.write('echo Current directory: %CD%\n')
+                                            f.write('echo Script path: ' + file_path + '\n')
+                                            f.write('echo.\n')
+                                            # Try Git Bash first
+                                            f.write('if exist "C:\\Program Files\\Git\\bin\\bash.exe" (\n')
+                                            f.write('    "C:\\Program Files\\Git\\bin\\bash.exe" -c "cd \\"$(dirname \\"' + file_path.replace('\\', '/') + '\\")\\" && ./\\"$(basename \\"' + file_path.replace('\\', '/') + '\\")\\""\n')
+                                            f.write(') else (\n')
+                                            # Then try WSL
+                                            f.write('    wsl bash -c "cd \\"$(dirname \\"' + file_path.replace('\\', '/') + '\\")\\" && ./\\"$(basename \\"' + file_path.replace('\\', '/') + '\\")\\""\n')
+                                            f.write(')\n')
+                                            f.write('echo.\n')
+                                            f.write('echo Script execution completed.\n')
+                                            f.write('pause\n')
+                                        
+                                        # Run the batch file
+                                        subprocess.Popen([temp_batch], 
+                                                       creationflags=subprocess.CREATE_NEW_CONSOLE,
+                                                       cwd=os.path.dirname(file_path))
+                                        
+                                        # Schedule the batch file for deletion after a delay
+                                        def delete_temp_batch():
+                                            time.sleep(5)  # Wait 5 seconds
                                             try:
-                                                # Then try WSL
-                                                subprocess.Popen(['wsl', 'bash', '-c', f'cd "{os.path.dirname(file_path)}" && ./{os.path.basename(file_path)} && echo "Press Enter to close..." && read'],
-                                                               creationflags=subprocess.CREATE_NEW_CONSOLE)
+                                                os.remove(temp_batch)
                                             except:
-                                                logger.error("Could not find Git Bash or WSL to run the shell script.")
+                                                pass
+                                        
+                                        threading.Thread(target=delete_temp_batch, daemon=True).start()
+                                        
                                     else:
                                         # Convert line endings to LF (Unix style)
                                         with open(file_path, 'rb') as f:
