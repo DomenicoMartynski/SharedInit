@@ -661,39 +661,49 @@ class FileHandler(FileSystemEventHandler):
                             try:
                                 if file_extension in ['.sh', '.bash']:
                                     if platform.system() == 'Windows':
-                                        # Create a temporary batch file to run the bash script
-                                        temp_batch = os.path.join(os.path.dirname(file_path), 'run_script.bat')
-                                        with open(temp_batch, 'w') as f:
-                                            f.write('@echo off\n')
-                                            f.write('echo Running script...\n')
-                                            f.write('echo Current directory: %CD%\n')
-                                            f.write('echo Script path: ' + file_path + '\n')
-                                            f.write('echo.\n')
+                                        # Create a PowerShell script to run the bash script
+                                        temp_ps1 = os.path.join(os.path.dirname(file_path), 'run_script.ps1')
+                                        with open(temp_ps1, 'w') as f:
+                                            f.write('$ErrorActionPreference = "Stop"\n')
+                                            f.write('Write-Host "Running script..."\n')
+                                            f.write('Write-Host "Current directory: $PWD"\n')
+                                            f.write('Write-Host "Script path: ' + file_path.replace('\\', '\\\\') + '"\n')
+                                            f.write('Write-Host ""\n')
+                                            
                                             # Try Git Bash first
-                                            f.write('if exist "C:\\Program Files\\Git\\bin\\bash.exe" (\n')
-                                            f.write('    "C:\\Program Files\\Git\\bin\\bash.exe" -c "cd \\"$(dirname \\"' + file_path.replace('\\', '/') + '\\")\\" && ./\\"$(basename \\"' + file_path.replace('\\', '/') + '\\")\\""\n')
-                                            f.write(') else (\n')
+                                            f.write('$gitBashPath = "C:\\Program Files\\Git\\bin\\bash.exe"\n')
+                                            f.write('if (Test-Path $gitBashPath) {\n')
+                                            f.write('    Write-Host "Using Git Bash..."\n')
+                                            f.write('    $scriptDir = Split-Path -Parent "' + file_path.replace('\\', '\\\\') + '"\n')
+                                            f.write('    $scriptName = Split-Path -Leaf "' + file_path.replace('\\', '\\\\') + '"\n')
+                                            f.write('    Set-Location $scriptDir\n')
+                                            f.write('    & $gitBashPath -c "./$scriptName"\n')
+                                            f.write('} else {\n')
                                             # Then try WSL
-                                            f.write('    wsl bash -c "cd \\"$(dirname \\"' + file_path.replace('\\', '/') + '\\")\\" && ./\\"$(basename \\"' + file_path.replace('\\', '/') + '\\")\\""\n')
-                                            f.write(')\n')
-                                            f.write('echo.\n')
-                                            f.write('echo Script execution completed.\n')
-                                            f.write('pause\n')
+                                            f.write('    Write-Host "Using WSL..."\n')
+                                            f.write('    $scriptDir = Split-Path -Parent "' + file_path.replace('\\', '\\\\') + '"\n')
+                                            f.write('    $scriptName = Split-Path -Leaf "' + file_path.replace('\\', '\\\\') + '"\n')
+                                            f.write('    Set-Location $scriptDir\n')
+                                            f.write('    wsl bash -c "./$scriptName"\n')
+                                            f.write('}\n')
+                                            f.write('Write-Host ""\n')
+                                            f.write('Write-Host "Script execution completed."\n')
+                                            f.write('Write-Host "Press Enter to continue..."\n')
+                                            f.write('$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")\n')
                                         
-                                        # Run the batch file
-                                        subprocess.Popen([temp_batch], 
-                                                       creationflags=subprocess.CREATE_NEW_CONSOLE,
-                                                       cwd=os.path.dirname(file_path))
+                                        # Run the PowerShell script
+                                        subprocess.Popen(['powershell', '-ExecutionPolicy', 'Bypass', '-File', temp_ps1],
+                                                       creationflags=subprocess.CREATE_NEW_CONSOLE)
                                         
-                                        # Schedule the batch file for deletion after a delay
-                                        def delete_temp_batch():
+                                        # Schedule the PowerShell script for deletion after a delay
+                                        def delete_temp_ps1():
                                             time.sleep(5)  # Wait 5 seconds
                                             try:
-                                                os.remove(temp_batch)
+                                                os.remove(temp_ps1)
                                             except:
                                                 pass
                                         
-                                        threading.Thread(target=delete_temp_batch, daemon=True).start()
+                                        threading.Thread(target=delete_temp_ps1, daemon=True).start()
                                         
                                     else:
                                         # Convert line endings to LF (Unix style)
@@ -739,7 +749,7 @@ class FileHandler(FileSystemEventHandler):
                                     if platform.system() == 'Windows':
                                         # Add pause at the end of PowerShell scripts
                                         with open(file_path, 'a') as f:
-                                            f.write('\nRead-Host "Press Enter to continue"')
+                                            f.write('\nWrite-Host "Press Enter to continue..."\n$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")')
                                         subprocess.Popen(['powershell', '-ExecutionPolicy', 'Bypass', '-File', file_path],
                                                        creationflags=subprocess.CREATE_NEW_CONSOLE,
                                                        cwd=os.path.dirname(file_path))
