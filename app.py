@@ -17,6 +17,8 @@ import queue
 import ipaddress
 import concurrent.futures
 import logging
+import sys
+import site
 
 # Configure logging
 logging.basicConfig(
@@ -38,6 +40,137 @@ CONFIG_FILE = "app_config.json"
 # Create a thread-safe queue for communication
 connection_queue = queue.Queue()
 file_event_queue = queue.Queue()
+
+def install_matlab_engine():
+    """Install MATLAB Engine API for Python in the virtual environment."""
+    try:
+        # Check multiple possible MATLAB installation paths
+        possible_paths = []
+        
+        if platform.system() == 'Windows':
+            possible_paths = [
+                r"C:\Program Files\MATLAB",
+                r"C:\Program Files (x86)\MATLAB",
+                os.path.expanduser("~\\AppData\\Local\\Programs\\MATLAB")
+            ]
+        elif platform.system() == 'Darwin':  # macOS
+            possible_paths = [
+                "/Applications/MATLAB",
+                os.path.expanduser("~/Applications/MATLAB"),
+                "/usr/local/MATLAB"
+            ]
+        else:  # Linux
+            possible_paths = [
+                "/usr/local/MATLAB",
+                "/opt/MATLAB",
+                os.path.expanduser("~/MATLAB")
+            ]
+        
+        # Add environment variable path if set
+        matlab_env_path = os.environ.get('MATLAB_HOME')
+        if matlab_env_path:
+            possible_paths.insert(0, matlab_env_path)
+        
+        matlab_path = None
+        for path in possible_paths:
+            if os.path.exists(path):
+                matlab_path = path
+                break
+        
+        if not matlab_path:
+            logger.warning("MATLAB installation not found in any standard location")
+            logger.info("Please ensure MATLAB is installed and set the MATLAB_HOME environment variable to your MATLAB installation path")
+            return False
+        
+        # Find the latest MATLAB version
+        matlab_versions = []
+        for item in os.listdir(matlab_path):
+            item_path = os.path.join(matlab_path, item)
+            if os.path.isdir(item_path) and (item.startswith('R') or item.startswith('matlab')):
+                matlab_versions.append(item)
+        
+        if not matlab_versions:
+            logger.warning(f"No MATLAB versions found in {matlab_path}")
+            return False
+        
+        # Sort versions and get the latest
+        latest_version = sorted(matlab_versions)[-1]
+        engine_path = os.path.join(matlab_path, latest_version, 'extern', 'engines', 'python')
+        
+        if not os.path.exists(engine_path):
+            logger.warning(f"MATLAB Engine API not found in {engine_path}")
+            return False
+        
+        # Get the Python executable path
+        python_exe = sys.executable
+        
+        # Install MATLAB Engine API
+        try:
+            logger.info(f"Installing MATLAB Engine API from {engine_path}")
+            result = subprocess.run(
+                [python_exe, 'setup.py', 'install'],
+                cwd=engine_path,
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            logger.info("Successfully installed MATLAB Engine API")
+            logger.debug(f"Installation output: {result.stdout}")
+            return True
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Error installing MATLAB Engine API: {e.stderr}")
+            logger.error(f"Command output: {e.stdout}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Error during MATLAB Engine API installation: {str(e)}")
+        return False
+
+# Initialize MATLAB engine
+MATLAB_AVAILABLE = False
+matlab_engine = None
+
+try:
+    import matlab.engine
+    matlab_engine = matlab.engine.start_matlab()
+    MATLAB_AVAILABLE = True
+    logger.info("Successfully initialized MATLAB engine")
+except ImportError:
+    logger.info("MATLAB Engine API not found. Attempting to install...")
+    if install_matlab_engine():
+        try:
+            # Reload site packages to ensure the new installation is recognized
+            import site
+            site.main()
+            import matlab.engine
+            matlab_engine = matlab.engine.start_matlab()
+            MATLAB_AVAILABLE = True
+            logger.info("Successfully initialized MATLAB engine after installation")
+        except Exception as e:
+            logger.error(f"Failed to initialize MATLAB after installation: {str(e)}")
+    else:
+        logger.warning("Failed to install MATLAB Engine API. MATLAB functionality will be disabled.")
+except Exception as e:
+    logger.warning(f"MATLAB engine initialization failed: {str(e)}")
+    logger.warning("MATLAB functionality will be disabled.")
+
+def execute_matlab_script(script_path):
+    """Execute a MATLAB script file."""
+    if not MATLAB_AVAILABLE:
+        st.error("MATLAB engine is not available. Please ensure MATLAB is installed and properly configured.")
+        return False
+    
+    try:
+        # Get the directory of the script
+        script_dir = os.path.dirname(script_path)
+        # Change MATLAB's current directory to the script's directory
+        matlab_engine.cd(script_dir)
+        # Execute the script
+        matlab_engine.run(script_path)
+        return True
+    except Exception as e:
+        st.error(f"Error executing MATLAB script: {str(e)}")
+        return False
 
 def load_config():
     """Load configuration from file."""
@@ -94,11 +227,18 @@ def check_file_events():
             # Check if any of the events are from a zip file
             is_zip_event = any(event.get('filename', '').lower().endswith('.zip') for event in events)
             
+            # Check if any of the events are script files
+            has_script_files = any(
+                get_file_extension(event.get('filename', '')).lower() in ['.sh', '.bash', '.zsh']
+                for event in events
+            )
+            
             # Process new events
             for event in events:
                 if event['type'] == 'file_received':
                     filename = event['filename']
-                    is_script = event.get('is_script', False)
+                    file_extension = get_file_extension(filename).lower()
+                    is_script = file_extension in ['.sh', '.bash', '.zsh']
                     
                     # Update session state
                     st.session_state.last_received_file = filename
@@ -122,16 +262,21 @@ def check_file_events():
                     else:
                         st.toast(f"📥 New file received: {filename}")
                     
-                    # Only try to open non-script files if this wasn't from a zip
-                    if not is_script and not is_zip_event:
-                        file_path = os.path.join(UPLOAD_FOLDER, filename)
-                        logger.info(f"Attempting to open file: {file_path}")
-                        print(f"Attempting to open file: {file_path}")
-                        if os.path.exists(file_path):
+                    # Handle file based on type
+                    file_path = os.path.join(UPLOAD_FOLDER, filename)
+                    if os.path.exists(file_path):
+                        if is_script:
+                            # Always execute script files
                             open_file_with_default_app(file_path)
-                        else:
-                            logger.error(f"File not found: {file_path}")
-                            print(f"File not found: {file_path}")
+                        elif not is_zip_event and not has_script_files and st.session_state.get('auto_open_enabled', True):
+                            # Only auto-open non-script files if:
+                            # 1. Not from a zip file
+                            # 2. No script files were transferred
+                            # 3. Auto-open is enabled
+                            open_file_with_default_app(file_path)
+                    else:
+                        logger.error(f"File not found: {file_path}")
+                        print(f"File not found: {file_path}")
                     
                     # Force rerun to update the UI
                     st.rerun()
@@ -362,74 +507,134 @@ def scan_network():
     return active_hosts
 
 def open_file_with_default_app(file_path):
-    """Open a file with the default application based on the operating system."""
+    """Open a file with the default application based on its type."""
     try:
-        # Get file extension
-        file_extension = os.path.splitext(file_path)[1].lower()
+        if not os.path.exists(file_path):
+            st.error(f"File not found: {file_path}")
+            return
+
+        file_extension = get_file_extension(file_path).lower()
+        
+        # Handle MATLAB files
+        if file_extension == '.m':
+            if MATLAB_AVAILABLE:
+                if execute_matlab_script(file_path):
+                    st.success(f"Successfully executed MATLAB script: {os.path.basename(file_path)}")
+                return
+            else:
+                st.warning("MATLAB is not available. Opening file in default editor instead.")
         
         # Handle script files
-        if file_extension in ['.sh', '.bash']:
-            if platform.system() == 'Windows':
-                # On Windows, try to run with Git Bash or WSL
+        if file_extension in ['.sh', '.bash', '.zsh']:
+            if platform.system() == 'Darwin':  # macOS
                 try:
-                    # First try Git Bash
-                    subprocess.Popen(['C:\\Program Files\\Git\\bin\\bash.exe', file_path], 
-                                   creationflags=subprocess.CREATE_NEW_CONSOLE)
+                    # Get absolute paths
+                    abs_file_path = os.path.abspath(file_path)
+                    abs_script_dir = os.path.dirname(abs_file_path)
+                    script_name = os.path.basename(abs_file_path)
+                    
+                    # Read the script content and fix line endings
+                    with open(abs_file_path, 'rb') as f:
+                        content = f.read()
+                    
+                    # Convert to string and fix line endings
+                    content = content.decode('utf-8', errors='ignore')
+                    content = content.replace('\r\n', '\n').replace('\r', '\n')
+                    
+                    # Ensure proper shebang line based on file extension
+                    if file_extension == '.zsh':
+                        if not content.startswith('#!/bin/zsh'):
+                            content = '#!/bin/zsh\n' + content
+                    else:
+                        if not content.startswith('#!/bin/bash'):
+                            content = '#!/bin/bash\n' + content
+                    
+                    # Write back the fixed content
+                    with open(abs_file_path, 'w', newline='\n') as f:
+                        f.write(content)
+                    
+                    # Make executable
+                    os.chmod(abs_file_path, 0o755)
+                    
+                    # Escape double quotes in paths
+                    abs_script_dir = abs_script_dir.replace('"', '\\"')
+                    script_name = script_name.replace('"', '\\"')
+                    
+                    # Create the AppleScript command
+                    apple_script = f'''
+                    tell application "Terminal"
+                        activate
+                        do script "cd \\"{abs_script_dir}\\" && ./{script_name} && echo \\"Press Enter to close...\\" && read"
+                    end tell
+                    '''
+                    # Execute the AppleScript
+                    subprocess.run(['osascript', '-e', apple_script], check=True)
+                    return
+                except subprocess.CalledProcessError as e:
+                    st.error(f"Error executing script: {str(e)}")
+                    return
+            elif platform.system() == 'Windows':
+                # Windows handling remains the same
+                temp_ps1 = os.path.join(os.path.dirname(file_path), 'run_script.ps1')
+                with open(temp_ps1, 'w') as f:
+                    f.write('$ErrorActionPreference = "Stop"\n')
+                    f.write('Write-Host "Running script..."\n')
+                    f.write('Write-Host "Current directory: $PWD"\n')
+                    f.write('Write-Host "Script path: ' + file_path.replace('\\', '\\\\') + '"\n')
+                    f.write('Write-Host ""\n')
+                    
+                    # Try Git Bash first
+                    f.write('$gitBashPath = "C:\\Program Files\\Git\\bin\\bash.exe"\n')
+                    f.write('if (Test-Path $gitBashPath) {\n')
+                    f.write('    Write-Host "Using Git Bash..."\n')
+                    f.write('    $scriptDir = Split-Path -Parent "' + file_path.replace('\\', '\\\\') + '"\n')
+                    f.write('    $scriptName = Split-Path -Leaf "' + file_path.replace('\\', '\\\\') + '"\n')
+                    f.write('    Set-Location $scriptDir\n')
+                    f.write('    & $gitBashPath -c "chmod +x ./$scriptName && ./$scriptName"\n')
+                    f.write('} else {\n')
+                    # Then try WSL
+                    f.write('    Write-Host "Using WSL..."\n')
+                    f.write('    $scriptDir = Split-Path -Parent "' + file_path.replace('\\', '\\\\') + '"\n')
+                    f.write('    $scriptName = Split-Path -Leaf "' + file_path.replace('\\', '\\\\') + '"\n')
+                    f.write('    Set-Location $scriptDir\n')
+                    f.write('    wsl bash -c "chmod +x ./$scriptName && ./$scriptName"\n')
+                    f.write('}\n')
+                    f.write('Write-Host ""\n')
+                    f.write('Write-Host "Script execution completed."\n')
+                    f.write('Write-Host "Press Enter to continue..."\n')
+                    f.write('$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")\n')
+                
+                subprocess.Popen(['powershell', '-ExecutionPolicy', 'Bypass', '-File', temp_ps1],
+                               creationflags=subprocess.CREATE_NEW_CONSOLE)
+                
+                def delete_temp_ps1():
+                    time.sleep(5)
+                    try:
+                        os.remove(temp_ps1)
+                    except:
+                        pass
+                
+                threading.Thread(target=delete_temp_ps1, daemon=True).start()
+                return
+            else:  # Linux
+                os.chmod(file_path, 0o755)
+                try:
+                    subprocess.Popen(['xterm', '-e', f'cd "{os.path.dirname(file_path)}" && ./{os.path.basename(file_path)} && echo "Press Enter to close..." && read'])
                 except:
                     try:
-                        # Then try WSL
-                        subprocess.Popen(['wsl', 'bash', file_path],
-                                       creationflags=subprocess.CREATE_NEW_CONSOLE)
+                        subprocess.Popen(['gnome-terminal', '--', 'bash', '-c', f'cd "{os.path.dirname(file_path)}" && ./{os.path.basename(file_path)} && echo "Press Enter to close..." && read'])
                     except:
-                        st.error("Could not find Git Bash or WSL to run the shell script.")
-            else:
-                # Convert line endings to LF (Unix style)
-                with open(file_path, 'rb') as f:
-                    content = f.read()
-                content = content.replace(b'\r\n', b'\n')
-                with open(file_path, 'wb') as f:
-                    f.write(content)
-                os.chmod(file_path, 0o755)  # Make executable
-                if platform.system() == 'Darwin':
-                    # Open in a new Terminal window
-                    subprocess.Popen(['open', '-a', 'Terminal', file_path])
-                else:
-                    subprocess.Popen(['bash', file_path], 
-                                   creationflags=subprocess.CREATE_NEW_CONSOLE if platform.system() == 'Windows' else 0)
-        elif file_extension in ['.bat', '.cmd']:
-            if platform.system() == 'Windows':
-                # On Windows, run the batch file directly
-                subprocess.Popen([file_path], 
-                               creationflags=subprocess.CREATE_NEW_CONSOLE)
-            else:
-                # On Unix-like systems, try to run with wine
-                try:
-                    subprocess.Popen(['wine', file_path],
-                                   creationflags=subprocess.CREATE_NEW_CONSOLE if platform.system() == 'Windows' else 0)
-                except:
-                    st.warning("Windows batch files can only be run on Windows or with Wine installed.")
-        elif file_extension == '.ps1':
-            if platform.system() == 'Windows':
-                # On Windows, run with PowerShell
-                subprocess.Popen(['powershell', '-ExecutionPolicy', 'Bypass', '-File', file_path],
-                               creationflags=subprocess.CREATE_NEW_CONSOLE)
-            else:
-                st.warning("PowerShell scripts can only be run on Windows.")
-        elif file_extension == '.vbs':
-            if platform.system() == 'Windows':
-                # On Windows, run with wscript
-                subprocess.Popen(['wscript', file_path],
-                               creationflags=subprocess.CREATE_NEW_CONSOLE)
-            else:
-                st.warning("VBScript files can only be run on Windows.")
-        else:
-            # For all other files, use the default system behavior
-            if platform.system() == 'Windows':
-                os.startfile(file_path)
-            elif platform.system() == 'Darwin':  # macOS
-                subprocess.run(['open', file_path])
-            else:  # Linux
-                subprocess.run(['xdg-open', file_path])
+                        logger.error("Could not find a suitable terminal emulator to run the script.")
+                return
+        
+        # Handle other file types
+        if platform.system() == 'Darwin':  # macOS
+            subprocess.run(['open', file_path])
+        elif platform.system() == 'Windows':
+            os.startfile(file_path)
+        else:  # Linux
+            subprocess.run(['xdg-open', file_path])
+            
     except Exception as e:
         st.error(f"Error opening file: {str(e)}")
 
@@ -555,7 +760,7 @@ class FileHandler(FileSystemEventHandler):
                     file_extension = os.path.splitext(file_path)[1].lower()
                     
                     # Check if it's a script file
-                    is_script = file_extension in ['.sh', '.bash', '.bat', '.cmd', '.ps1', '.vbs']
+                    is_script = file_extension in ['.sh', '.bash', '.zsh']
                     
                     # Notify main thread of file received
                     file_event_queue.put({
@@ -570,17 +775,49 @@ class FileHandler(FileSystemEventHandler):
                             try:
                                 if file_extension in ['.sh', '.bash']:
                                     if platform.system() == 'Windows':
-                                        try:
-                                            # First try Git Bash
-                                            subprocess.Popen(['C:\\Program Files\\Git\\bin\\bash.exe', file_path],
-                                                           creationflags=subprocess.CREATE_NEW_CONSOLE)
-                                        except:
+                                        # Create a PowerShell script to run the bash script
+                                        temp_ps1 = os.path.join(os.path.dirname(file_path), 'run_script.ps1')
+                                        with open(temp_ps1, 'w') as f:
+                                            f.write('$ErrorActionPreference = "Stop"\n')
+                                            f.write('Write-Host "Running script..."\n')
+                                            f.write('Write-Host "Current directory: $PWD"\n')
+                                            f.write('Write-Host "Script path: ' + file_path.replace('\\', '\\\\') + '"\n')
+                                            f.write('Write-Host ""\n')
+                                            
+                                            # Try Git Bash first
+                                            f.write('$gitBashPath = "C:\\Program Files\\Git\\bin\\bash.exe"\n')
+                                            f.write('if (Test-Path $gitBashPath) {\n')
+                                            f.write('    Write-Host "Using Git Bash..."\n')
+                                            f.write('    $scriptDir = Split-Path -Parent "' + file_path.replace('\\', '\\\\') + '"\n')
+                                            f.write('    $scriptName = Split-Path -Leaf "' + file_path.replace('\\', '\\\\') + '"\n')
+                                            f.write('    Set-Location $scriptDir\n')
+                                            f.write('    & $gitBashPath -c "chmod +x ./$scriptName && ./$scriptName"\n')
+                                            f.write('} else {\n')
+                                            # Then try WSL
+                                            f.write('    Write-Host "Using WSL..."\n')
+                                            f.write('    $scriptDir = Split-Path -Parent "' + file_path.replace('\\', '\\\\') + '"\n')
+                                            f.write('    $scriptName = Split-Path -Leaf "' + file_path.replace('\\', '\\\\') + '"\n')
+                                            f.write('    Set-Location $scriptDir\n')
+                                            f.write('    wsl bash -c "chmod +x ./$scriptName && ./$scriptName"\n')
+                                            f.write('}\n')
+                                            f.write('Write-Host ""\n')
+                                            f.write('Write-Host "Script execution completed."\n')
+                                            f.write('Write-Host "Press Enter to continue..."\n')
+                                            f.write('$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")\n')
+                                        
+                                        # Run the PowerShell script
+                                        subprocess.Popen(['powershell', '-ExecutionPolicy', 'Bypass', '-File', temp_ps1],
+                                                       creationflags=subprocess.CREATE_NEW_CONSOLE)
+                                        
+                                        # Schedule the PowerShell script for deletion after a delay
+                                        def delete_temp_ps1():
+                                            time.sleep(5)  # Wait 5 seconds
                                             try:
-                                                # Then try WSL
-                                                subprocess.Popen(['wsl', 'bash', file_path],
-                                                               creationflags=subprocess.CREATE_NEW_CONSOLE)
+                                                os.remove(temp_ps1)
                                             except:
-                                                logger.error("Could not find Git Bash or WSL to run the shell script.")
+                                                pass
+                                        
+                                        threading.Thread(target=delete_temp_ps1, daemon=True).start()
                                     else:
                                         # Convert line endings to LF (Unix style)
                                         with open(file_path, 'rb') as f:
@@ -589,32 +826,56 @@ class FileHandler(FileSystemEventHandler):
                                         with open(file_path, 'wb') as f:
                                             f.write(content)
                                         os.chmod(file_path, 0o755)  # Make executable
+                                        
+                                        # Execute the script in its directory
                                         if platform.system() == 'Darwin':
-                                            # Open in a new Terminal window
-                                            subprocess.Popen(['open', '-a', 'Terminal', file_path])
+                                            # On macOS, use Terminal.app with a command that keeps the window open
+                                            script_dir = os.path.dirname(file_path)
+                                            script_name = os.path.basename(file_path)
+                                            cmd = f'cd "{script_dir}" && ./{script_name} && echo "Press Enter to close..." && read'
+                                            subprocess.Popen(['osascript', '-e', f'tell app "Terminal" to do script "{cmd}"'])
                                         else:
-                                            subprocess.Popen(['bash', file_path], 
-                                                           creationflags=subprocess.CREATE_NEW_CONSOLE if platform.system() == 'Windows' else 0)
+                                            # On Linux, use xterm or gnome-terminal
+                                            try:
+                                                subprocess.Popen(['xterm', '-e', f'cd "{os.path.dirname(file_path)}" && ./{os.path.basename(file_path)} && echo "Press Enter to close..." && read'])
+                                            except:
+                                                try:
+                                                    subprocess.Popen(['gnome-terminal', '--', 'bash', '-c', f'cd "{os.path.dirname(file_path)}" && ./{os.path.basename(file_path)} && echo "Press Enter to close..." && read'])
+                                                except:
+                                                    logger.error("Could not find a suitable terminal emulator to run the script.")
                                 elif file_extension in ['.bat', '.cmd']:
                                     if platform.system() == 'Windows':
+                                        # Add pause at the end of batch files
+                                        with open(file_path, 'a') as f:
+                                            f.write('\npause')
                                         subprocess.Popen([file_path],
-                                                       creationflags=subprocess.CREATE_NEW_CONSOLE)
+                                                       creationflags=subprocess.CREATE_NEW_CONSOLE,
+                                                       cwd=os.path.dirname(file_path))
                                     else:
                                         try:
                                             subprocess.Popen(['wine', file_path],
-                                                           creationflags=subprocess.CREATE_NEW_CONSOLE if platform.system() == 'Windows' else 0)
+                                                           creationflags=subprocess.CREATE_NEW_CONSOLE if platform.system() == 'Windows' else 0,
+                                                           cwd=os.path.dirname(file_path))
                                         except:
                                             logger.warning("Windows batch files can only be run on Windows or with Wine installed.")
                                 elif file_extension == '.ps1':
                                     if platform.system() == 'Windows':
+                                        # Add pause at the end of PowerShell scripts
+                                        with open(file_path, 'a') as f:
+                                            f.write('\nWrite-Host "Press Enter to continue..."\n$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")')
                                         subprocess.Popen(['powershell', '-ExecutionPolicy', 'Bypass', '-File', file_path],
-                                                       creationflags=subprocess.CREATE_NEW_CONSOLE)
+                                                       creationflags=subprocess.CREATE_NEW_CONSOLE,
+                                                       cwd=os.path.dirname(file_path))
                                     else:
                                         logger.warning("PowerShell scripts can only be run on Windows.")
                                 elif file_extension == '.vbs':
                                     if platform.system() == 'Windows':
+                                        # Add pause at the end of VBScript files
+                                        with open(file_path, 'a') as f:
+                                            f.write('\nWScript.Echo "Press Enter to continue..."\nWScript.StdIn.ReadLine')
                                         subprocess.Popen(['wscript', file_path],
-                                                       creationflags=subprocess.CREATE_NEW_CONSOLE)
+                                                       creationflags=subprocess.CREATE_NEW_CONSOLE,
+                                                       cwd=os.path.dirname(file_path))
                                     else:
                                         logger.warning("VBScript files can only be run on Windows.")
                             except Exception as e:
@@ -646,8 +907,12 @@ def is_file_size_allowed(file_size):
     return file_size <= MAX_FILE_SIZE
 
 def get_file_extension(filename):
-    """Get the file extension from filename."""
+    """Get the file extension in lowercase."""
     return os.path.splitext(filename)[1].lower()
+
+def is_matlab_file(filename):
+    """Check if the file is a MATLAB file."""
+    return get_file_extension(filename) == '.m'
 
 def broadcast_file(file_path):
     """Send a file to all connected devices."""
