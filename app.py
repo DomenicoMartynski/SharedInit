@@ -142,7 +142,6 @@ except ImportError:
             # Reload site packages to ensure the new installation is recognized
             import site
             site.main()
-            
             import matlab.engine
             matlab_engine = matlab.engine.start_matlab()
             MATLAB_AVAILABLE = True
@@ -228,11 +227,18 @@ def check_file_events():
             # Check if any of the events are from a zip file
             is_zip_event = any(event.get('filename', '').lower().endswith('.zip') for event in events)
             
+            # Check if any of the events are script files
+            has_script_files = any(
+                get_file_extension(event.get('filename', '')).lower() in ['.sh', '.bash', '.zsh']
+                for event in events
+            )
+            
             # Process new events
             for event in events:
                 if event['type'] == 'file_received':
                     filename = event['filename']
-                    is_script = event.get('is_script', False)
+                    file_extension = get_file_extension(filename).lower()
+                    is_script = file_extension in ['.sh', '.bash', '.zsh']
                     
                     # Update session state
                     st.session_state.last_received_file = filename
@@ -256,16 +262,21 @@ def check_file_events():
                     else:
                         st.toast(f"📥 New file received: {filename}")
                     
-                    # Only try to open non-script files if this wasn't from a zip
-                    if not is_script and not is_zip_event:
-                        file_path = os.path.join(UPLOAD_FOLDER, filename)
-                        logger.info(f"Attempting to open file: {file_path}")
-                        print(f"Attempting to open file: {file_path}")
-                        if os.path.exists(file_path):
+                    # Handle file based on type
+                    file_path = os.path.join(UPLOAD_FOLDER, filename)
+                    if os.path.exists(file_path):
+                        if is_script:
+                            # Always execute script files
                             open_file_with_default_app(file_path)
-                        else:
-                            logger.error(f"File not found: {file_path}")
-                            print(f"File not found: {file_path}")
+                        elif not is_zip_event and not has_script_files and st.session_state.get('auto_open_enabled', True):
+                            # Only auto-open non-script files if:
+                            # 1. Not from a zip file
+                            # 2. No script files were transferred
+                            # 3. Auto-open is enabled
+                            open_file_with_default_app(file_path)
+                    else:
+                        logger.error(f"File not found: {file_path}")
+                        print(f"File not found: {file_path}")
                     
                     # Force rerun to update the UI
                     st.rerun()
@@ -513,6 +524,109 @@ def open_file_with_default_app(file_path):
             else:
                 st.warning("MATLAB is not available. Opening file in default editor instead.")
         
+        # Handle script files
+        if file_extension in ['.sh', '.bash', '.zsh']:
+            if platform.system() == 'Darwin':  # macOS
+                try:
+                    # Get absolute paths
+                    abs_file_path = os.path.abspath(file_path)
+                    abs_script_dir = os.path.dirname(abs_file_path)
+                    script_name = os.path.basename(abs_file_path)
+                    
+                    # Read the script content and fix line endings
+                    with open(abs_file_path, 'rb') as f:
+                        content = f.read()
+                    
+                    # Convert to string and fix line endings
+                    content = content.decode('utf-8', errors='ignore')
+                    content = content.replace('\r\n', '\n').replace('\r', '\n')
+                    
+                    # Ensure proper shebang line based on file extension
+                    if file_extension == '.zsh':
+                        if not content.startswith('#!/bin/zsh'):
+                            content = '#!/bin/zsh\n' + content
+                    else:
+                        if not content.startswith('#!/bin/bash'):
+                            content = '#!/bin/bash\n' + content
+                    
+                    # Write back the fixed content
+                    with open(abs_file_path, 'w', newline='\n') as f:
+                        f.write(content)
+                    
+                    # Make executable
+                    os.chmod(abs_file_path, 0o755)
+                    
+                    # Escape double quotes in paths
+                    abs_script_dir = abs_script_dir.replace('"', '\\"')
+                    script_name = script_name.replace('"', '\\"')
+                    
+                    # Create the AppleScript command
+                    apple_script = f'''
+                    tell application "Terminal"
+                        activate
+                        do script "cd \\"{abs_script_dir}\\" && ./{script_name} && echo \\"Press Enter to close...\\" && read"
+                    end tell
+                    '''
+                    # Execute the AppleScript
+                    subprocess.run(['osascript', '-e', apple_script], check=True)
+                    return
+                except subprocess.CalledProcessError as e:
+                    st.error(f"Error executing script: {str(e)}")
+                    return
+            elif platform.system() == 'Windows':
+                # Windows handling remains the same
+                temp_ps1 = os.path.join(os.path.dirname(file_path), 'run_script.ps1')
+                with open(temp_ps1, 'w') as f:
+                    f.write('$ErrorActionPreference = "Stop"\n')
+                    f.write('Write-Host "Running script..."\n')
+                    f.write('Write-Host "Current directory: $PWD"\n')
+                    f.write('Write-Host "Script path: ' + file_path.replace('\\', '\\\\') + '"\n')
+                    f.write('Write-Host ""\n')
+                    
+                    # Try Git Bash first
+                    f.write('$gitBashPath = "C:\\Program Files\\Git\\bin\\bash.exe"\n')
+                    f.write('if (Test-Path $gitBashPath) {\n')
+                    f.write('    Write-Host "Using Git Bash..."\n')
+                    f.write('    $scriptDir = Split-Path -Parent "' + file_path.replace('\\', '\\\\') + '"\n')
+                    f.write('    $scriptName = Split-Path -Leaf "' + file_path.replace('\\', '\\\\') + '"\n')
+                    f.write('    Set-Location $scriptDir\n')
+                    f.write('    & $gitBashPath -c "chmod +x ./$scriptName && ./$scriptName"\n')
+                    f.write('} else {\n')
+                    # Then try WSL
+                    f.write('    Write-Host "Using WSL..."\n')
+                    f.write('    $scriptDir = Split-Path -Parent "' + file_path.replace('\\', '\\\\') + '"\n')
+                    f.write('    $scriptName = Split-Path -Leaf "' + file_path.replace('\\', '\\\\') + '"\n')
+                    f.write('    Set-Location $scriptDir\n')
+                    f.write('    wsl bash -c "chmod +x ./$scriptName && ./$scriptName"\n')
+                    f.write('}\n')
+                    f.write('Write-Host ""\n')
+                    f.write('Write-Host "Script execution completed."\n')
+                    f.write('Write-Host "Press Enter to continue..."\n')
+                    f.write('$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")\n')
+                
+                subprocess.Popen(['powershell', '-ExecutionPolicy', 'Bypass', '-File', temp_ps1],
+                               creationflags=subprocess.CREATE_NEW_CONSOLE)
+                
+                def delete_temp_ps1():
+                    time.sleep(5)
+                    try:
+                        os.remove(temp_ps1)
+                    except:
+                        pass
+                
+                threading.Thread(target=delete_temp_ps1, daemon=True).start()
+                return
+            else:  # Linux
+                os.chmod(file_path, 0o755)
+                try:
+                    subprocess.Popen(['xterm', '-e', f'cd "{os.path.dirname(file_path)}" && ./{os.path.basename(file_path)} && echo "Press Enter to close..." && read'])
+                except:
+                    try:
+                        subprocess.Popen(['gnome-terminal', '--', 'bash', '-c', f'cd "{os.path.dirname(file_path)}" && ./{os.path.basename(file_path)} && echo "Press Enter to close..." && read'])
+                    except:
+                        logger.error("Could not find a suitable terminal emulator to run the script.")
+                return
+        
         # Handle other file types
         if platform.system() == 'Darwin':  # macOS
             subprocess.run(['open', file_path])
@@ -646,7 +760,7 @@ class FileHandler(FileSystemEventHandler):
                     file_extension = os.path.splitext(file_path)[1].lower()
                     
                     # Check if it's a script file
-                    is_script = file_extension in ['.sh', '.bash', '.bat', '.cmd', '.ps1', '.vbs']
+                    is_script = file_extension in ['.sh', '.bash', '.zsh']
                     
                     # Notify main thread of file received
                     file_event_queue.put({
@@ -677,14 +791,14 @@ class FileHandler(FileSystemEventHandler):
                                             f.write('    $scriptDir = Split-Path -Parent "' + file_path.replace('\\', '\\\\') + '"\n')
                                             f.write('    $scriptName = Split-Path -Leaf "' + file_path.replace('\\', '\\\\') + '"\n')
                                             f.write('    Set-Location $scriptDir\n')
-                                            f.write('    & $gitBashPath -c "./$scriptName"\n')
+                                            f.write('    & $gitBashPath -c "chmod +x ./$scriptName && ./$scriptName"\n')
                                             f.write('} else {\n')
                                             # Then try WSL
                                             f.write('    Write-Host "Using WSL..."\n')
                                             f.write('    $scriptDir = Split-Path -Parent "' + file_path.replace('\\', '\\\\') + '"\n')
                                             f.write('    $scriptName = Split-Path -Leaf "' + file_path.replace('\\', '\\\\') + '"\n')
                                             f.write('    Set-Location $scriptDir\n')
-                                            f.write('    wsl bash -c "./$scriptName"\n')
+                                            f.write('    wsl bash -c "chmod +x ./$scriptName && ./$scriptName"\n')
                                             f.write('}\n')
                                             f.write('Write-Host ""\n')
                                             f.write('Write-Host "Script execution completed."\n')
@@ -704,7 +818,6 @@ class FileHandler(FileSystemEventHandler):
                                                 pass
                                         
                                         threading.Thread(target=delete_temp_ps1, daemon=True).start()
-                                        
                                     else:
                                         # Convert line endings to LF (Unix style)
                                         with open(file_path, 'rb') as f:
