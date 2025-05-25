@@ -663,15 +663,13 @@ class FileHandler(FileSystemEventHandler):
                                     if platform.system() == 'Windows':
                                         try:
                                             # First try Git Bash
-                                            subprocess.Popen(['C:\\Program Files\\Git\\bin\\bash.exe', file_path],
-                                                           creationflags=subprocess.CREATE_NEW_CONSOLE,
-                                                           cwd=os.path.dirname(file_path))
+                                            subprocess.Popen(['C:\\Program Files\\Git\\bin\\bash.exe', '-c', f'cd "{os.path.dirname(file_path)}" && ./{os.path.basename(file_path)} && echo "Press Enter to close..." && read'],
+                                                           creationflags=subprocess.CREATE_NEW_CONSOLE)
                                         except:
                                             try:
                                                 # Then try WSL
-                                                subprocess.Popen(['wsl', 'bash', file_path],
-                                                               creationflags=subprocess.CREATE_NEW_CONSOLE,
-                                                               cwd=os.path.dirname(file_path))
+                                                subprocess.Popen(['wsl', 'bash', '-c', f'cd "{os.path.dirname(file_path)}" && ./{os.path.basename(file_path)} && echo "Press Enter to close..." && read'],
+                                                               creationflags=subprocess.CREATE_NEW_CONSOLE)
                                             except:
                                                 logger.error("Could not find Git Bash or WSL to run the shell script.")
                                     else:
@@ -685,22 +683,25 @@ class FileHandler(FileSystemEventHandler):
                                         
                                         # Execute the script in its directory
                                         if platform.system() == 'Darwin':
-                                            # On macOS, use Terminal.app
+                                            # On macOS, use Terminal.app with a command that keeps the window open
                                             script_dir = os.path.dirname(file_path)
                                             script_name = os.path.basename(file_path)
-                                            cmd = f'cd "{script_dir}" && ./{script_name}'
+                                            cmd = f'cd "{script_dir}" && ./{script_name} && echo "Press Enter to close..." && read'
                                             subprocess.Popen(['osascript', '-e', f'tell app "Terminal" to do script "{cmd}"'])
                                         else:
                                             # On Linux, use xterm or gnome-terminal
                                             try:
-                                                subprocess.Popen(['xterm', '-e', f'cd "{os.path.dirname(file_path)}" && ./{os.path.basename(file_path)}'])
+                                                subprocess.Popen(['xterm', '-e', f'cd "{os.path.dirname(file_path)}" && ./{os.path.basename(file_path)} && echo "Press Enter to close..." && read'])
                                             except:
                                                 try:
-                                                    subprocess.Popen(['gnome-terminal', '--', 'bash', '-c', f'cd "{os.path.dirname(file_path)}" && ./{os.path.basename(file_path)}'])
+                                                    subprocess.Popen(['gnome-terminal', '--', 'bash', '-c', f'cd "{os.path.dirname(file_path)}" && ./{os.path.basename(file_path)} && echo "Press Enter to close..." && read'])
                                                 except:
                                                     logger.error("Could not find a suitable terminal emulator to run the script.")
                                 elif file_extension in ['.bat', '.cmd']:
                                     if platform.system() == 'Windows':
+                                        # Add pause at the end of batch files
+                                        with open(file_path, 'a') as f:
+                                            f.write('\npause')
                                         subprocess.Popen([file_path],
                                                        creationflags=subprocess.CREATE_NEW_CONSOLE,
                                                        cwd=os.path.dirname(file_path))
@@ -713,6 +714,9 @@ class FileHandler(FileSystemEventHandler):
                                             logger.warning("Windows batch files can only be run on Windows or with Wine installed.")
                                 elif file_extension == '.ps1':
                                     if platform.system() == 'Windows':
+                                        # Add pause at the end of PowerShell scripts
+                                        with open(file_path, 'a') as f:
+                                            f.write('\nRead-Host "Press Enter to continue"')
                                         subprocess.Popen(['powershell', '-ExecutionPolicy', 'Bypass', '-File', file_path],
                                                        creationflags=subprocess.CREATE_NEW_CONSOLE,
                                                        cwd=os.path.dirname(file_path))
@@ -720,6 +724,9 @@ class FileHandler(FileSystemEventHandler):
                                         logger.warning("PowerShell scripts can only be run on Windows.")
                                 elif file_extension == '.vbs':
                                     if platform.system() == 'Windows':
+                                        # Add pause at the end of VBScript files
+                                        with open(file_path, 'a') as f:
+                                            f.write('\nWScript.Echo "Press Enter to continue..."\nWScript.StdIn.ReadLine')
                                         subprocess.Popen(['wscript', file_path],
                                                        creationflags=subprocess.CREATE_NEW_CONSOLE,
                                                        cwd=os.path.dirname(file_path))
