@@ -32,8 +32,8 @@ def load_config():
             with open(CONFIG_FILE, 'r') as f:
                 return json.load(f)
         except:
-            return {"download_folder": "downloads"}
-    return {"download_folder": "downloads"}
+            return {"download_folder": "downloads", "max_path": ""}
+    return {"download_folder": "downloads", "max_path": ""}
 
 def save_config(config):
     """Save configuration to file."""
@@ -67,6 +67,44 @@ def change_download_folder(new_folder):
         return True
     except Exception as e:
         st.error(f"Error changing download folder: {str(e)}")
+        return False
+
+def change_max_path(new_path):
+    """Change the 3ds Max installation path."""
+    try:
+        if not new_path:
+            st.error("Please select the 3dsmax.exe file")
+            return False
+            
+        if not os.path.exists(new_path):
+            st.error("The selected file does not exist")
+            return False
+            
+        if os.path.basename(new_path).lower() != "3dsmax.exe":
+            st.error("Please select the 3dsmax.exe file")
+            return False
+        
+        # Update session state and config
+        st.session_state.max_path = new_path
+        config = load_config()
+        config["max_path"] = new_path
+        save_config(config)
+        
+        # Notify Flask server about the configuration change
+        try:
+            response = requests.post(
+                f"http://localhost:{FLASK_PORT}/update_config",
+                json={"max_path": new_path},
+                timeout=1
+            )
+            if response.status_code != 200:
+                st.warning("Flask server was notified but returned an error. Some features may not work until you restart the app.")
+        except Exception as e:
+            st.warning("Could not notify Flask server about the configuration change. Some features may not work until you restart the app.")
+        
+        return True
+    except Exception as e:
+        st.error(f"Error changing 3ds Max path: {str(e)}")
         return False
 
 def open_folder_picker():
@@ -112,6 +150,42 @@ def open_folder_picker():
     else:
         return None  # For other platforms, we'll use manual input
 
+def open_file_picker():
+    """Open a file picker dialog for 3dsmax.exe."""
+    if platform.system() == 'Windows':
+        try:
+            # Use PowerShell command to show file picker dialog
+            powershell_command = '''
+            Add-Type -AssemblyName System.Windows.Forms
+            $fileBrowser = New-Object System.Windows.Forms.OpenFileDialog
+            $fileBrowser.Title = "Select 3dsmax.exe"
+            $fileBrowser.Filter = "3ds Max Executable (3dsmax.exe)|3dsmax.exe"
+            $fileBrowser.InitialDirectory = "C:\\"
+            $fileBrowser.FileName = "3dsmax.exe"
+            if ($fileBrowser.ShowDialog() -eq "OK") {
+                $fileBrowser.FileName
+            }
+            '''
+            result = subprocess.run(
+                ["powershell", "-Command", powershell_command],
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                selected_path = os.path.normpath(result.stdout.strip())
+                # Validate that it's actually 3dsmax.exe
+                if os.path.basename(selected_path).lower() == "3dsmax.exe":
+                    return selected_path
+                else:
+                    st.error("Please select the 3dsmax.exe file")
+                    return None
+            return None
+        except Exception as e:
+            st.error(f"Error opening file picker: {str(e)}")
+            return None
+    else:
+        return None
+
 def main():
     st.title("Your Device")
     
@@ -119,6 +193,8 @@ def main():
     config = load_config()
     if 'download_folder' not in st.session_state:
         st.session_state.download_folder = config.get("download_folder", "downloads")
+    if 'max_path' not in st.session_state:
+        st.session_state.max_path = config.get("max_path", "")
     
     # Get local device information
     local_ip = get_local_ip()
@@ -180,6 +256,41 @@ def main():
                     if change_download_folder(default_folder):
                         st.success(f"Download folder reset to default: {os.path.abspath(default_folder)}")
                         st.rerun()
+        
+        # Add 3ds Max configuration
+        if platform.system() == 'Windows':
+            st.markdown("#### 3ds Max Settings")
+            current_max_path = st.session_state.max_path
+            if current_max_path:
+                st.write(f"**Current 3ds Max Path:** {current_max_path}")
+            else:
+                st.write("**Current 3ds Max Path:** Not configured")
+            
+            # Add manual path input option
+            new_max_path = st.text_input("Enter 3ds Max path manually:", value=current_max_path)
+            
+            col6, col7, col8 = st.columns([1, 1, 1])
+            with col6:
+                if st.button("Choose 3ds Max (File Picker)"):
+                    new_path = open_file_picker()
+                    if new_path and new_path != current_max_path:
+                        if change_max_path(new_path):
+                            st.success(f"3ds Max path changed to: {new_path}")
+                            st.rerun()
+            
+            with col7:
+                if st.button("Save Manual Path", key="save_max_path"):
+                    if new_max_path and new_max_path != current_max_path:
+                        if change_max_path(new_max_path):
+                            st.success(f"3ds Max path changed to: {new_max_path}")
+                            st.rerun()
+            
+            with col8:
+                if st.button("Clear Path", key="clear_max_path"):
+                    if current_max_path:
+                        if change_max_path(""):
+                            st.success("3ds Max path cleared")
+                            st.rerun()
     
     with col2:
         st.markdown("#### Quick Actions")
@@ -196,27 +307,8 @@ def main():
         - Make sure your firewall allows connections on port 8501
         - Other devices can find you as long as you're on the same network
         - Choose a download folder with sufficient storage space
+        - Configure 3ds Max path to enable script execution
         """)
-    
-    # Add 3ds Max configuration
-    if platform.system() == 'Windows':
-        st.markdown("### 3ds Max Configuration")
-        if 'max_path' not in st.session_state:
-            st.session_state.max_path = ""
-        
-        max_path = st.text_input(
-            "3ds Max Installation Path",
-            value=st.session_state.max_path,
-            placeholder="e.g., E:\\Aplikacje\\Autodesk\\3ds Max 2026\\3dsmax.exe",
-            help="Enter the full path to your 3dsmax.exe file"
-        )
-        
-        if max_path != st.session_state.max_path:
-            st.session_state.max_path = max_path
-            if os.path.exists(max_path):
-                st.success("✅ 3ds Max path configured successfully!")
-            else:
-                st.warning("⚠️ The specified path does not exist. Please check the path and try again.")
     
     # Add a section for troubleshooting
     with st.expander("🔧 Troubleshooting"):
@@ -233,6 +325,12 @@ def main():
         2. Ensure you have write permissions for the folder
         3. Check if there's enough disk space
         4. Try using an absolute path if relative path doesn't work
+        
+        If you have issues with 3ds Max:
+        1. Make sure the path points to the correct 3dsmax.exe file
+        2. Ensure you have the correct version of 3ds Max installed
+        3. Check if you have necessary permissions to run 3ds Max
+        4. Try running the app with administrator privileges
         """)
 
 if __name__ == "__main__":
