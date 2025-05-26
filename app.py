@@ -242,6 +242,68 @@ if 'download_folder' not in st.session_state:
 # Update UPLOAD_FOLDER to use the configured folder
 UPLOAD_FOLDER = st.session_state.download_folder
 
+def find_3ds_max():
+    """Find 3ds Max installation across different drives and paths."""
+    if platform.system() != 'Windows':
+        return None
+        
+    # Get available drives
+    drives = []
+    for letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ':
+        if os.path.exists(f"{letter}:"):
+            drives.append(f"{letter}:")
+    
+    # First, try to find 3dsmax.exe in the PATH
+    try:
+        result = subprocess.run(['where', '3dsmax.exe'], capture_output=True, text=True)
+        if result.returncode == 0:
+            return result.stdout.strip().split('\n')[0]
+    except:
+        pass
+    
+    # Then check standard Program Files locations first
+    standard_paths = [
+        r"{drive}:\Program Files\Autodesk\3ds Max {year}",
+        r"{drive}:\Program Files (x86)\Autodesk\3ds Max {year}"
+    ]
+    
+    # Check years from newest to oldest
+    years = range(2026, 2010, -1)
+    
+    # Check standard locations first
+    for drive in drives:
+        for path_template in standard_paths:
+            for year in years:
+                path = path_template.format(drive=drive, year=year)
+                if os.path.exists(path):
+                    max_exe = os.path.join(path, "3dsmax.exe")
+                    if os.path.exists(max_exe):
+                        logger.info(f"Found 3ds Max in standard location: {max_exe}")
+                        return max_exe
+    
+    # If not found in standard locations, search all drives
+    for drive in drives:
+        try:
+            logger.info(f"Searching for 3ds Max on drive {drive}...")
+            # Use a more efficient search approach
+            for root, dirs, files in os.walk(f"{drive}\\"):
+                # Skip system directories to speed up search
+                if any(skip in root.lower() for skip in ['\\windows\\', '\\programdata\\', '\\$recycle.bin\\']):
+                    continue
+                    
+                # Check if this directory contains Autodesk or 3ds Max
+                if 'autodesk' in root.lower() or '3ds max' in root.lower():
+                    if '3dsmax.exe' in files:
+                        max_exe = os.path.join(root, '3dsmax.exe')
+                        logger.info(f"Found 3ds Max at: {max_exe}")
+                        return max_exe
+        except Exception as e:
+            logger.error(f"Error searching drive {drive}: {str(e)}")
+            continue
+    
+    logger.error("3ds Max installation not found")
+    return None
+
 def check_file_events():
     """Check for new file events."""
     try:
@@ -297,32 +359,8 @@ def check_file_events():
                             # For .ms files, execute directly without opening
                             if file_extension == '.ms':
                                 if platform.system() == 'Windows':
-                                    # Get the 3ds Max installation path
-                                    max_paths = [
-                                        r"C:\Program Files\Autodesk\3ds Max 2026",
-                                        r"C:\Program Files\Autodesk\3ds Max 2025",
-                                        r"C:\Program Files\Autodesk\3ds Max 2024",
-                                        r"C:\Program Files\Autodesk\3ds Max 2023",
-                                        r"C:\Program Files\Autodesk\3ds Max 2022",
-                                        r"C:\Program Files\Autodesk\3ds Max 2021",
-                                        r"C:\Program Files\Autodesk\3ds Max 2020",
-                                        r"C:\Program Files\Autodesk\3ds Max 2019",
-                                        r"C:\Program Files\Autodesk\3ds Max 2018",
-                                        r"C:\Program Files\Autodesk\3ds Max 2017",
-                                        r"C:\Program Files\Autodesk\3ds Max 2016",
-                                        r"C:\Program Files\Autodesk\3ds Max 2015",
-                                        r"C:\Program Files\Autodesk\3ds Max 2014",
-                                        r"C:\Program Files\Autodesk\3ds Max 2013",
-                                        r"C:\Program Files\Autodesk\3ds Max 2012",
-                                        r"C:\Program Files\Autodesk\3ds Max 2011",
-                                    ]
-                                    
-                                    max_exe = None
-                                    for path in max_paths:
-                                        if os.path.exists(path):
-                                            max_exe = os.path.join(path, "3dsmax.exe")
-                                            if os.path.exists(max_exe):
-                                                break
+                                    # Find 3ds Max installation
+                                    max_exe = find_3ds_max()
                                     
                                     if max_exe:
                                         # Create a batch file to execute the script
@@ -914,22 +952,7 @@ class FileHandler(FileSystemEventHandler):
                                 if file_extension == '.ms':
                                     if platform.system() == 'Windows':
                                         # Get the 3ds Max installation path
-                                        max_paths = [
-                                            r"C:\Program Files\Autodesk\3ds Max 2024",
-                                            r"C:\Program Files\Autodesk\3ds Max 2023",
-                                            r"C:\Program Files\Autodesk\3ds Max 2022",
-                                            r"C:\Program Files\Autodesk\3ds Max 2021",
-                                            r"C:\Program Files\Autodesk\3ds Max 2020",
-                                            r"C:\Program Files\Autodesk\3ds Max 2019",
-                                            r"C:\Program Files\Autodesk\3ds Max 2018"
-                                        ]
-                                        
-                                        max_exe = None
-                                        for path in max_paths:
-                                            if os.path.exists(path):
-                                                max_exe = os.path.join(path, "3dsmax.exe")
-                                                if os.path.exists(max_exe):
-                                                    break
+                                        max_exe = find_3ds_max()
                                         
                                         if max_exe:
                                             # Create a batch file to execute the script
@@ -954,7 +977,6 @@ class FileHandler(FileSystemEventHandler):
                                                     pass
                                             
                                             create_thread(target=cleanup_batch).start()
-                                            return
                                         else:
                                             logger.error("3ds Max installation not found. Please ensure 3ds Max is installed.")
                                             return
