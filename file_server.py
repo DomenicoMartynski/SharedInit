@@ -36,7 +36,7 @@ def load_config():
         except:
             pass
     # Return default configuration
-    return {"download_folder": DEFAULT_UPLOAD_FOLDER}
+    return {"download_folder": DEFAULT_UPLOAD_FOLDER, "max_path": ""}
 
 # Load the configured upload folder
 config = load_config()
@@ -229,6 +229,8 @@ def update_config():
     """Update server configuration."""
     try:
         data = request.get_json()
+        config = load_config()
+        
         if 'download_folder' in data:
             new_folder = data['download_folder']
             # Update the global UPLOAD_FOLDER
@@ -239,14 +241,18 @@ def update_config():
             # Ensure the folder exists
             ensure_upload_folder()
             
-            # Save the new configuration
-            config = load_config()
+            # Update the config
             config['download_folder'] = new_folder
-            with open(CONFIG_FILE, 'w') as f:
-                json.dump(config, f)
-                
-            return jsonify({'message': 'Configuration updated successfully'}), 200
-        return jsonify({'error': 'Invalid configuration data'}), 400
+            
+        if 'max_path' in data:
+            # Update the max_path in config
+            config['max_path'] = data['max_path']
+            
+        # Save the updated configuration
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(config, f)
+            
+        return jsonify({'message': 'Configuration updated successfully'}), 200
     except Exception as e:
         logger.error(f"Error updating configuration: {str(e)}")
         return jsonify({'error': str(e)}), 500
