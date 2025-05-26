@@ -299,13 +299,22 @@ def check_file_events():
                                 if platform.system() == 'Windows':
                                     # Get the 3ds Max installation path
                                     max_paths = [
+                                        r"C:\Program Files\Autodesk\3ds Max 2026",
+                                        r"C:\Program Files\Autodesk\3ds Max 2025",
                                         r"C:\Program Files\Autodesk\3ds Max 2024",
                                         r"C:\Program Files\Autodesk\3ds Max 2023",
                                         r"C:\Program Files\Autodesk\3ds Max 2022",
                                         r"C:\Program Files\Autodesk\3ds Max 2021",
                                         r"C:\Program Files\Autodesk\3ds Max 2020",
                                         r"C:\Program Files\Autodesk\3ds Max 2019",
-                                        r"C:\Program Files\Autodesk\3ds Max 2018"
+                                        r"C:\Program Files\Autodesk\3ds Max 2018",
+                                        r"C:\Program Files\Autodesk\3ds Max 2017",
+                                        r"C:\Program Files\Autodesk\3ds Max 2016",
+                                        r"C:\Program Files\Autodesk\3ds Max 2015",
+                                        r"C:\Program Files\Autodesk\3ds Max 2014",
+                                        r"C:\Program Files\Autodesk\3ds Max 2013",
+                                        r"C:\Program Files\Autodesk\3ds Max 2012",
+                                        r"C:\Program Files\Autodesk\3ds Max 2011",
                                     ]
                                     
                                     max_exe = None
