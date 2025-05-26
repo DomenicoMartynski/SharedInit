@@ -252,19 +252,23 @@ def find_3ds_max():
     for letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ':
         if os.path.exists(f"{letter}:"):
             drives.append(f"{letter}:")
+            logger.info(f"Found drive: {letter}:")
     
     # First, try to find 3dsmax.exe in the PATH
     try:
         result = subprocess.run(['where', '3dsmax.exe'], capture_output=True, text=True)
         if result.returncode == 0:
-            return result.stdout.strip().split('\n')[0]
-    except:
-        pass
+            path = result.stdout.strip().split('\n')[0]
+            logger.info(f"Found 3ds Max in PATH: {path}")
+            return path
+    except Exception as e:
+        logger.error(f"Error checking PATH: {str(e)}")
     
     # Then check standard Program Files locations first
     standard_paths = [
         r"{drive}:\Program Files\Autodesk\3ds Max {year}",
-        r"{drive}:\Program Files (x86)\Autodesk\3ds Max {year}"
+        r"{drive}:\Program Files (x86)\Autodesk\3ds Max {year}",
+        #r"{drive}:\Aplikacje\Autodesk\3ds Max {year}"  # Added your specific path
     ]
     
     # Check years from newest to oldest
@@ -275,6 +279,7 @@ def find_3ds_max():
         for path_template in standard_paths:
             for year in years:
                 path = path_template.format(drive=drive, year=year)
+                logger.info(f"Checking path: {path}")
                 if os.path.exists(path):
                     max_exe = os.path.join(path, "3dsmax.exe")
                     if os.path.exists(max_exe):
@@ -284,15 +289,16 @@ def find_3ds_max():
     # If not found in standard locations, search all drives
     for drive in drives:
         try:
-            logger.info(f"Searching for 3ds Max on drive {drive}...")
+            logger.info(f"Starting deep search on drive {drive}...")
             # Use a more efficient search approach
             for root, dirs, files in os.walk(f"{drive}\\"):
                 # Skip system directories to speed up search
                 if any(skip in root.lower() for skip in ['\\windows\\', '\\programdata\\', '\\$recycle.bin\\']):
                     continue
-                    
-                # Check if this directory contains Autodesk or 3ds Max
+                
+                # Log progress for directories containing Autodesk or 3ds Max
                 if 'autodesk' in root.lower() or '3ds max' in root.lower():
+                    logger.info(f"Checking directory: {root}")
                     if '3dsmax.exe' in files:
                         max_exe = os.path.join(root, '3dsmax.exe')
                         logger.info(f"Found 3ds Max at: {max_exe}")
@@ -300,6 +306,12 @@ def find_3ds_max():
         except Exception as e:
             logger.error(f"Error searching drive {drive}: {str(e)}")
             continue
+    
+    # If still not found, try a direct check of your specific path
+    #specific_path = r"E:\Aplikacje\Autodesk\3ds Max 2026\3dsmax.exe"
+    #if os.path.exists(specific_path):
+    #    logger.info(f"Found 3ds Max at specific path: {specific_path}")
+    #    return specific_path
     
     logger.error("3ds Max installation not found")
     return None
