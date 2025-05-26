@@ -257,7 +257,7 @@ def check_file_events():
             
             # Check if any of the events are script files
             has_script_files = any(
-                get_file_extension(event.get('filename', '')).lower() in ['.sh', '.bash', '.zsh']
+                get_file_extension(event.get('filename', '')).lower() in ['.sh', '.bash', '.zsh', '.ms']
                 for event in events
             )
             
@@ -266,7 +266,7 @@ def check_file_events():
                 if event['type'] == 'file_received':
                     filename = event['filename']
                     file_extension = get_file_extension(filename).lower()
-                    is_script = file_extension in ['.sh', '.bash', '.zsh']
+                    is_script = file_extension in ['.sh', '.bash', '.zsh', '.ms']
                     
                     # Update session state
                     st.session_state.last_received_file = filename
@@ -825,7 +825,7 @@ class FileHandler(FileSystemEventHandler):
                     file_extension = os.path.splitext(file_path)[1].lower()
                     
                     # Check if it's a script file
-                    is_script = file_extension in ['.sh', '.bash', '.zsh']
+                    is_script = file_extension in ['.sh', '.bash', '.zsh', '.ms']
                     
                     # Notify main thread of file received
                     file_event_queue.put({
@@ -838,9 +838,87 @@ class FileHandler(FileSystemEventHandler):
                     if is_script:
                         def execute_script():
                             try:
-                                if file_extension in ['.sh', '.bash']:
+                                if file_extension == '.ms':
                                     if platform.system() == 'Windows':
-                                        # Create a PowerShell script to run the bash script
+                                        # Get the 3ds Max installation path
+                                        max_paths = [
+                                            r"C:\Program Files\Autodesk\3ds Max 2024",
+                                            r"C:\Program Files\Autodesk\3ds Max 2023",
+                                            r"C:\Program Files\Autodesk\3ds Max 2022",
+                                            r"C:\Program Files\Autodesk\3ds Max 2021",
+                                            r"C:\Program Files\Autodesk\3ds Max 2020",
+                                            r"C:\Program Files\Autodesk\3ds Max 2019",
+                                            r"C:\Program Files\Autodesk\3ds Max 2018"
+                                        ]
+                                        
+                                        max_exe = None
+                                        for path in max_paths:
+                                            if os.path.exists(path):
+                                                max_exe = os.path.join(path, "3dsmax.exe")
+                                                if os.path.exists(max_exe):
+                                                    break
+                                        
+                                        if max_exe:
+                                            # Execute 3ds Max with the script file directly
+                                            subprocess.Popen([max_exe, '-U', 'MAXScript', file_path],
+                                                          creationflags=subprocess.CREATE_NEW_CONSOLE)
+                                            return
+                                        else:
+                                            logger.error("3ds Max installation not found. Please ensure 3ds Max is installed.")
+                                            return
+                                    else:
+                                        logger.warning("3ds Max scripts can only be executed on Windows.")
+                                        return
+                                elif file_extension in ['.sh', '.bash']:
+                                    if platform.system() == 'Darwin':  # macOS
+                                        try:
+                                            # Get absolute paths
+                                            abs_file_path = os.path.abspath(file_path)
+                                            abs_script_dir = os.path.dirname(abs_file_path)
+                                            script_name = os.path.basename(abs_file_path)
+                                            
+                                            # Read the script content and fix line endings
+                                            with open(abs_file_path, 'rb') as f:
+                                                content = f.read()
+                                            
+                                            # Convert to string and fix line endings
+                                            content = content.decode('utf-8', errors='ignore')
+                                            content = content.replace('\r\n', '\n').replace('\r', '\n')
+                                            
+                                            # Ensure proper shebang line based on file extension
+                                            if file_extension == '.zsh':
+                                                if not content.startswith('#!/bin/zsh'):
+                                                    content = '#!/bin/zsh\n' + content
+                                            else:
+                                                if not content.startswith('#!/bin/bash'):
+                                                    content = '#!/bin/bash\n' + content
+                                            
+                                            # Write back the fixed content
+                                            with open(abs_file_path, 'w', newline='\n') as f:
+                                                f.write(content)
+                                            
+                                            # Make executable
+                                            os.chmod(abs_file_path, 0o755)
+                                            
+                                            # Escape double quotes in paths
+                                            abs_script_dir = abs_script_dir.replace('"', '\\"')
+                                            script_name = script_name.replace('"', '\\"')
+                                            
+                                            # Create the AppleScript command
+                                            apple_script = f'''
+                                            tell application "Terminal"
+                                                activate
+                                                do script "cd \\"{abs_script_dir}\\" && ./{script_name} && echo \\"Press Enter to close...\\" && read"
+                                            end tell
+                                            '''
+                                            # Execute the AppleScript
+                                            subprocess.run(['osascript', '-e', apple_script], check=True)
+                                            return
+                                        except subprocess.CalledProcessError as e:
+                                            st.error(f"Error executing script: {str(e)}")
+                                            return
+                                    elif platform.system() == 'Windows':
+                                        # Windows handling remains the same
                                         temp_ps1 = os.path.join(os.path.dirname(file_path), 'run_script.ps1')
                                         with open(temp_ps1, 'w') as f:
                                             f.write('$ErrorActionPreference = "Stop"\n')
@@ -870,11 +948,9 @@ class FileHandler(FileSystemEventHandler):
                                             f.write('Write-Host "Press Enter to continue..."\n')
                                             f.write('$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")\n')
                                         
-                                        # Run the PowerShell script
                                         subprocess.Popen(['powershell', '-ExecutionPolicy', 'Bypass', '-File', temp_ps1],
                                                        creationflags=subprocess.CREATE_NEW_CONSOLE)
                                         
-                                        # Schedule the PowerShell script for deletion after a delay
                                         def delete_temp_ps1():
                                             time.sleep(5)
                                             try:
@@ -884,30 +960,14 @@ class FileHandler(FileSystemEventHandler):
                                         
                                         create_thread(target=delete_temp_ps1).start()
                                     else:
-                                        # Convert line endings to LF (Unix style)
-                                        with open(file_path, 'rb') as f:
-                                            content = f.read()
-                                        content = content.replace(b'\r\n', b'\n')
-                                        with open(file_path, 'wb') as f:
-                                            f.write(content)
-                                        os.chmod(file_path, 0o755)  # Make executable
-                                        
-                                        # Execute the script in its directory
-                                        if platform.system() == 'Darwin':
-                                            # On macOS, use Terminal.app with a command that keeps the window open
-                                            script_dir = os.path.dirname(file_path)
-                                            script_name = os.path.basename(file_path)
-                                            cmd = f'cd "{script_dir}" && ./{script_name} && echo "Press Enter to close..." && read'
-                                            subprocess.Popen(['osascript', '-e', f'tell app "Terminal" to do script "{cmd}"'])
-                                        else:
-                                            # On Linux, use xterm or gnome-terminal
+                                        os.chmod(file_path, 0o755)
+                                        try:
+                                            subprocess.Popen(['xterm', '-e', f'cd "{os.path.dirname(file_path)}" && ./{os.path.basename(file_path)} && echo "Press Enter to close..." && read'])
+                                        except:
                                             try:
-                                                subprocess.Popen(['xterm', '-e', f'cd "{os.path.dirname(file_path)}" && ./{os.path.basename(file_path)} && echo "Press Enter to close..." && read'])
+                                                subprocess.Popen(['gnome-terminal', '--', 'bash', '-c', f'cd "{os.path.dirname(file_path)}" && ./{os.path.basename(file_path)} && echo "Press Enter to close..." && read'])
                                             except:
-                                                try:
-                                                    subprocess.Popen(['gnome-terminal', '--', 'bash', '-c', f'cd "{os.path.dirname(file_path)}" && ./{os.path.basename(file_path)} && echo "Press Enter to close..." && read'])
-                                                except:
-                                                    logger.error("Could not find a suitable terminal emulator to run the script.")
+                                                logger.error("Could not find a suitable terminal emulator to run the script.")
                                 elif file_extension in ['.bat', '.cmd']:
                                     if platform.system() == 'Windows':
                                         # Add pause at the end of batch files
