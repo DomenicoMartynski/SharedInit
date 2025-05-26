@@ -198,6 +198,26 @@ def main():
         - Choose a download folder with sufficient storage space
         """)
     
+    # Add 3ds Max configuration
+    if platform.system() == 'Windows':
+        st.markdown("### 3ds Max Configuration")
+        if 'max_path' not in st.session_state:
+            st.session_state.max_path = ""
+        
+        max_path = st.text_input(
+            "3ds Max Installation Path",
+            value=st.session_state.max_path,
+            placeholder="e.g., E:\\Aplikacje\\Autodesk\\3ds Max 2026\\3dsmax.exe",
+            help="Enter the full path to your 3dsmax.exe file"
+        )
+        
+        if max_path != st.session_state.max_path:
+            st.session_state.max_path = max_path
+            if os.path.exists(max_path):
+                st.success("✅ 3ds Max path configured successfully!")
+            else:
+                st.warning("⚠️ The specified path does not exist. Please check the path and try again.")
+    
     # Add a section for troubleshooting
     with st.expander("🔧 Troubleshooting"):
         st.markdown("""

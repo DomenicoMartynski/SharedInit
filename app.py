@@ -243,77 +243,19 @@ if 'download_folder' not in st.session_state:
 UPLOAD_FOLDER = st.session_state.download_folder
 
 def find_3ds_max():
-    """Find 3ds Max installation across different drives and paths."""
+    """Find 3ds Max installation using the configured path."""
     if platform.system() != 'Windows':
         return None
-        
-    # Get available drives
-    drives = []
-    for letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ':
-        if os.path.exists(f"{letter}:"):
-            drives.append(f"{letter}:")
-            logger.info(f"Found drive: {letter}:")
     
-    # First, try to find 3dsmax.exe in the PATH
-    try:
-        result = subprocess.run(['where', '3dsmax.exe'], capture_output=True, text=True)
-        if result.returncode == 0:
-            path = result.stdout.strip().split('\n')[0]
-            logger.info(f"Found 3ds Max in PATH: {path}")
-            return path
-    except Exception as e:
-        logger.error(f"Error checking PATH: {str(e)}")
+    # Use the configured path if available
+    if hasattr(st.session_state, 'max_path') and st.session_state.max_path:
+        if os.path.exists(st.session_state.max_path):
+            logger.info(f"Using configured 3ds Max path: {st.session_state.max_path}")
+            return st.session_state.max_path
+        else:
+            logger.error(f"Configured 3ds Max path does not exist: {st.session_state.max_path}")
     
-    # Then check standard Program Files locations first
-    standard_paths = [
-        r"{drive}:\Program Files\Autodesk\3ds Max {year}",
-        r"{drive}:\Program Files (x86)\Autodesk\3ds Max {year}",
-        #r"{drive}:\Aplikacje\Autodesk\3ds Max {year}"  # Added your specific path
-    ]
-    
-    # Check years from newest to oldest
-    years = range(2026, 2010, -1)
-    
-    # Check standard locations first
-    for drive in drives:
-        for path_template in standard_paths:
-            for year in years:
-                path = path_template.format(drive=drive, year=year)
-                logger.info(f"Checking path: {path}")
-                if os.path.exists(path):
-                    max_exe = os.path.join(path, "3dsmax.exe")
-                    if os.path.exists(max_exe):
-                        logger.info(f"Found 3ds Max in standard location: {max_exe}")
-                        return max_exe
-    
-    # If not found in standard locations, search all drives
-    for drive in drives:
-        try:
-            logger.info(f"Starting deep search on drive {drive}...")
-            # Use a more efficient search approach
-            for root, dirs, files in os.walk(f"{drive}\\"):
-                # Skip system directories to speed up search
-                if any(skip in root.lower() for skip in ['\\windows\\', '\\programdata\\', '\\$recycle.bin\\']):
-                    continue
-                
-                # Log progress for directories containing Autodesk or 3ds Max
-                if 'autodesk' in root.lower() or '3ds max' in root.lower():
-                    logger.info(f"Checking directory: {root}")
-                    if '3dsmax.exe' in files:
-                        max_exe = os.path.join(root, '3dsmax.exe')
-                        logger.info(f"Found 3ds Max at: {max_exe}")
-                        return max_exe
-        except Exception as e:
-            logger.error(f"Error searching drive {drive}: {str(e)}")
-            continue
-    
-    # If still not found, try a direct check of your specific path
-    #specific_path = r"E:\Aplikacje\Autodesk\3ds Max 2026\3dsmax.exe"
-    #if os.path.exists(specific_path):
-    #    logger.info(f"Found 3ds Max at specific path: {specific_path}")
-    #    return specific_path
-    
-    logger.error("3ds Max installation not found")
+    logger.error("3ds Max installation not found. Please configure the path in the Connected Devices section.")
     return None
 
 def check_file_events():
@@ -1645,6 +1587,7 @@ def main():
 
     # Display connected devices
     st.header("Connected Devices")
+    
     if st.session_state.active_connections:
         for ip, device in st.session_state.active_connections.items():
             # Get downloads state
