@@ -543,6 +543,43 @@ def open_file_with_default_app(file_path):
 
         file_extension = get_file_extension(file_path).lower()
         
+        # Handle 3ds Max script files
+        if file_extension == '.ms':
+            if platform.system() == 'Windows':
+                try:
+                    # Get the 3ds Max installation path
+                    max_paths = [
+                        r"C:\Program Files\Autodesk\3ds Max 2024",
+                        r"C:\Program Files\Autodesk\3ds Max 2023",
+                        r"C:\Program Files\Autodesk\3ds Max 2022",
+                        r"C:\Program Files\Autodesk\3ds Max 2021",
+                        r"C:\Program Files\Autodesk\3ds Max 2020",
+                        r"C:\Program Files\Autodesk\3ds Max 2019",
+                        r"C:\Program Files\Autodesk\3ds Max 2018"
+                    ]
+                    
+                    max_exe = None
+                    for path in max_paths:
+                        if os.path.exists(path):
+                            max_exe = os.path.join(path, "3dsmax.exe")
+                            if os.path.exists(max_exe):
+                                break
+                    
+                    if max_exe:
+                        # Execute 3ds Max with the script file directly
+                        subprocess.Popen([max_exe, '-U', 'MAXScript', file_path],
+                                      creationflags=subprocess.CREATE_NEW_CONSOLE)
+                        return
+                    else:
+                        st.error("3ds Max installation not found. Please ensure 3ds Max is installed.")
+                        return
+                except Exception as e:
+                    st.error(f"Error executing 3ds Max script: {str(e)}")
+                    return
+            else:
+                st.warning("3ds Max scripts can only be executed on Windows.")
+                return
+        
         # Handle MATLAB files
         if file_extension == '.m':
             if MATLAB_AVAILABLE:
@@ -1367,12 +1404,12 @@ def main():
         allowed_types = {
             "Adobe Files": ["psd", "ai", "indd", "pdf", "prproj", "aep", "lrcat", "sesx"],
             "Microsoft Office": ["doc", "docx", "xls", "xlsx", "ppt", "pptx", "pub", "vsd", "mdb", "accdb", "one"],
-            "Autodesk": ["dwg", "dxf", "rvt", "rfa", "max", "ma", "mb", "ipt", "iam", "f3d", "nwd"],
+            "Autodesk": ["dwg", "dxf", "rvt", "rfa", "max", "ma", "mb", "ipt", "iam", "f3d", "nwd", "ms"],
             "Images": ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "svg", "webp", "ico", "raw", "cr2", "nef", "arw", "dng"],
             "Media": ["mp4", "avi", "mov", "wmv", "flv", "mkv", "mp3", "wav", "ogg", "flac", "m4a", "aac", "wma"],
             "Archives": ["zip", "rar", "7z", "tar", "gz", "bz2"],
             "Documents": ["txt", "rtf", "csv", "json", "xml", "html", "htm", "css", "js", "py", "java", "cpp", "c", "h", "sql"],
-            "Scripts": ["sh", "bash", "bat", "cmd", "ps1", "vbs"]  # Added script file types
+            "Scripts": ["sh", "bash", "bat", "cmd", "ps1", "vbs", "ms"]
         }
         
         # Flatten the allowed types for the actual file uploader
