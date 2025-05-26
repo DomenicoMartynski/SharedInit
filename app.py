@@ -20,6 +20,12 @@ import logging
 import sys
 import site
 
+# Version compatibility check
+PYTHON_VERSION = sys.version_info
+MIN_PYTHON_VERSION = (3, 8)
+if PYTHON_VERSION < MIN_PYTHON_VERSION:
+    raise RuntimeError(f"Python {MIN_PYTHON_VERSION[0]}.{MIN_PYTHON_VERSION[1]} or higher is required. You are using Python {PYTHON_VERSION[0]}.{PYTHON_VERSION[1]}")
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -40,6 +46,28 @@ CONFIG_FILE = "app_config.json"
 # Create a thread-safe queue for communication
 connection_queue = queue.Queue()
 file_event_queue = queue.Queue()
+
+# Compatibility layer for different Python versions
+def create_thread(target, daemon=True):
+    """Create a thread with version-specific handling."""
+    try:
+        # Python 3.13+ style
+        thread = threading.Thread(target=target, daemon=daemon)
+    except TypeError:
+        # Python 3.8-3.12 style
+        thread = threading.Thread(target=target)
+        thread.daemon = daemon
+    return thread
+
+def join_thread(thread, timeout=None):
+    """Join a thread with version-specific handling."""
+    try:
+        thread.join(timeout=timeout)
+    except Exception as e:
+        logger.error(f"Error joining thread: {str(e)}")
+        # Fallback for older Python versions
+        if timeout is not None:
+            thread.join()
 
 def install_matlab_engine():
     """Install MATLAB Engine API for Python in the virtual environment."""
@@ -614,7 +642,7 @@ def open_file_with_default_app(file_path):
                     except:
                         pass
                 
-                threading.Thread(target=delete_temp_ps1, daemon=True).start()
+                create_thread(target=delete_temp_ps1).start()
                 return
             else:  # Linux
                 os.chmod(file_path, 0o755)
@@ -688,11 +716,11 @@ def start_background_tasks():
             st.session_state.active_connections = {}
             
         # Start broadcast thread
-        broadcast_thread = threading.Thread(target=broadcast_presence, daemon=True)
+        broadcast_thread = create_thread(target=broadcast_presence)
         broadcast_thread.start()
         
         # Start listen thread
-        listen_thread = threading.Thread(target=listen_for_broadcasts, daemon=True)
+        listen_thread = create_thread(target=listen_for_broadcasts)
         listen_thread.start()
         
         st.session_state.background_threads_started = True
@@ -811,13 +839,13 @@ class FileHandler(FileSystemEventHandler):
                                         
                                         # Schedule the PowerShell script for deletion after a delay
                                         def delete_temp_ps1():
-                                            time.sleep(5)  # Wait 5 seconds
+                                            time.sleep(5)
                                             try:
                                                 os.remove(temp_ps1)
                                             except:
                                                 pass
                                         
-                                        threading.Thread(target=delete_temp_ps1, daemon=True).start()
+                                        create_thread(target=delete_temp_ps1).start()
                                     else:
                                         # Convert line endings to LF (Unix style)
                                         with open(file_path, 'rb') as f:
@@ -882,13 +910,13 @@ class FileHandler(FileSystemEventHandler):
                                 logger.error(f"Error executing script: {str(e)}")
                         
                         # Execute the script in a separate thread
-                        threading.Thread(target=execute_script, daemon=True).start()
+                        create_thread(target=execute_script).start()
                     else:
                         # For non-script files, open with default app after a short delay
                         def delayed_open():
                             time.sleep(1)
                             open_file_with_default_app(file_path)
-                        threading.Thread(target=delayed_open, daemon=True).start()
+                        create_thread(target=delayed_open).start()
                 except Exception as e:
                     logger.error(f"Error handling new file: {str(e)}")
 
@@ -898,8 +926,21 @@ def start_file_watcher():
         event_handler = FileHandler()
         observer = Observer()
         observer.schedule(event_handler, UPLOAD_FOLDER, recursive=False)
-        observer.start()
-        st.session_state.file_watcher = observer
+        try:
+            # Create a new thread for the observer with explicit thread handling
+            def run_observer():
+                try:
+                    observer.start()
+                except Exception as e:
+                    logger.error(f"Observer thread error: {str(e)}")
+            
+            observer_thread = create_thread(target=run_observer)
+            observer_thread.start()
+            st.session_state.file_watcher = observer
+            st.session_state.observer_thread = observer_thread
+        except Exception as e:
+            logger.error(f"Error starting file watcher: {str(e)}")
+            return None
     return st.session_state.file_watcher
 
 def is_file_size_allowed(file_size):
@@ -1473,5 +1514,9 @@ if __name__ == "__main__":
     finally:
         # Clean up file watcher if it exists
         if hasattr(st.session_state, 'file_watcher'):
-            st.session_state.file_watcher.stop()
-            st.session_state.file_watcher.join() 
+            try:
+                st.session_state.file_watcher.stop()
+                if hasattr(st.session_state, 'observer_thread'):
+                    join_thread(st.session_state.observer_thread, timeout=1.0)
+            except Exception as e:
+                logger.error(f"Error during cleanup: {str(e)}") 
