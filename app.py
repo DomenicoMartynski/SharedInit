@@ -585,188 +585,108 @@ def scan_network():
     return active_hosts
 
 def open_file_with_default_app(file_path):
-    """Open a file with the default application based on its type."""
+    """Open a file with the default application based on its extension."""
     try:
-        if not os.path.exists(file_path):
-            st.error(f"File not found: {file_path}")
-            return
-
-        file_extension = get_file_extension(file_path).lower()
+        file_extension = os.path.splitext(file_path)[1].lower()
         
-        # Handle 3ds Max script files
+        # Special handling for .ms files to use 3ds Max
         if file_extension == '.ms':
-            if platform.system() == 'Windows':
-                # Get the 3ds Max installation path
-                max_paths = [
-                    r"C:\Program Files\Autodesk\3ds Max 2024",
-                    r"C:\Program Files\Autodesk\3ds Max 2023",
-                    r"C:\Program Files\Autodesk\3ds Max 2022",
-                    r"C:\Program Files\Autodesk\3ds Max 2021",
-                    r"C:\Program Files\Autodesk\3ds Max 2020",
-                    r"C:\Program Files\Autodesk\3ds Max 2019",
-                    r"C:\Program Files\Autodesk\3ds Max 2018"
-                ]
+            # Get the configured 3ds Max path from session state
+            max_path = st.session_state.get('max_path', '')
+            if not max_path:
+                st.error("3ds Max path not configured. Please configure it in the 'Your Device' page.")
+                return False
                 
-                max_exe = None
-                for path in max_paths:
-                    if os.path.exists(path):
-                        max_exe = os.path.join(path, "3dsmax.exe")
-                        if os.path.exists(max_exe):
-                            break
+            if not os.path.exists(max_path):
+                st.error("Configured 3ds Max path does not exist. Please update it in the 'Your Device' page.")
+                return False
                 
-                if max_exe:
-                    # Create a batch file to execute the script
-                    batch_file = os.path.join(os.path.dirname(file_path), "run_max_script.bat")
-                    with open(batch_file, 'w') as f:
-                        f.write(f'@echo off\n')
-                        f.write(f'echo Executing 3ds Max script: {os.path.basename(file_path)}\n')
-                        f.write(f'"{max_exe}" -U MAXScript "{file_path}"\n')
-                        f.write(f'echo Script execution completed.\n')
-                        f.write(f'pause\n')
-                    
-                    # Execute the batch file in a new console window
-                    subprocess.Popen(['cmd.exe', '/c', 'start', 'cmd.exe', '/k', batch_file],
-                                  creationflags=subprocess.CREATE_NEW_CONSOLE)
-                    
-                    # Schedule cleanup of the batch file
-                    def cleanup_batch():
-                        time.sleep(5)
-                        try:
-                            os.remove(batch_file)
-                        except:
-                            pass
-                    
-                    create_thread(target=cleanup_batch).start()
-                    return
-                else:
-                    st.error("3ds Max installation not found. Please ensure 3ds Max is installed.")
-                    return
-            else:
-                st.warning("3ds Max scripts can only be executed on Windows.")
-                return
-        
+            # Create a batch file to run the script
+            batch_content = f'@echo off\n"{max_path}" -U MAXScript "{file_path}"'
+            batch_path = os.path.join(os.path.dirname(file_path), "run_max_script.bat")
+            
+            with open(batch_path, 'w') as f:
+                f.write(batch_content)
+            
+            # Run the batch file
+            subprocess.Popen(['cmd', '/c', 'start', batch_path], shell=True)
+            
+            # Schedule cleanup of the batch file
+            def cleanup_batch():
+                try:
+                    if os.path.exists(batch_path):
+                        os.remove(batch_path)
+                except Exception as e:
+                    print(f"Error cleaning up batch file: {e}")
+            
+            # Schedule cleanup after 5 seconds
+            threading.Timer(5, cleanup_batch).start()
+            return True
+            
         # Handle MATLAB files
-        if file_extension == '.m':
+        elif file_extension == '.m':
             if MATLAB_AVAILABLE:
                 if execute_matlab_script(file_path):
                     st.success(f"Successfully executed MATLAB script: {os.path.basename(file_path)}")
-                return
+                    return True
+                return False
             else:
                 st.warning("MATLAB is not available. Opening file in default editor instead.")
-        
-        # Handle script files
-        if file_extension in ['.sh', '.bash', '.zsh']:
-            if platform.system() == 'Darwin':  # macOS
-                try:
-                    # Get absolute paths
-                    abs_file_path = os.path.abspath(file_path)
-                    abs_script_dir = os.path.dirname(abs_file_path)
-                    script_name = os.path.basename(abs_file_path)
-                    
-                    # Read the script content and fix line endings
-                    with open(abs_file_path, 'rb') as f:
-                        content = f.read()
-                    
-                    # Convert to string and fix line endings
-                    content = content.decode('utf-8', errors='ignore')
-                    content = content.replace('\r\n', '\n').replace('\r', '\n')
-                    
-                    # Ensure proper shebang line based on file extension
-                    if file_extension == '.zsh':
-                        if not content.startswith('#!/bin/zsh'):
-                            content = '#!/bin/zsh\n' + content
-                    else:
-                        if not content.startswith('#!/bin/bash'):
-                            content = '#!/bin/bash\n' + content
-                    
-                    # Write back the fixed content
-                    with open(abs_file_path, 'w', newline='\n') as f:
-                        f.write(content)
-                    
-                    # Make executable
-                    os.chmod(abs_file_path, 0o755)
-                    
-                    # Escape double quotes in paths
-                    abs_script_dir = abs_script_dir.replace('"', '\\"')
-                    script_name = script_name.replace('"', '\\"')
-                    
-                    # Create the AppleScript command
-                    apple_script = f'''
-                    tell application "Terminal"
-                        activate
-                        do script "cd \\"{abs_script_dir}\\" && ./{script_name} && echo \\"Press Enter to close...\\" && read"
-                    end tell
-                    '''
-                    # Execute the AppleScript
-                    subprocess.run(['osascript', '-e', apple_script], check=True)
-                    return
-                except subprocess.CalledProcessError as e:
-                    st.error(f"Error executing script: {str(e)}")
-                    return
-            elif platform.system() == 'Windows':
-                # Windows handling remains the same
-                temp_ps1 = os.path.join(os.path.dirname(file_path), 'run_script.ps1')
-                with open(temp_ps1, 'w') as f:
-                    f.write('$ErrorActionPreference = "Stop"\n')
-                    f.write('Write-Host "Running script..."\n')
-                    f.write('Write-Host "Current directory: $PWD"\n')
-                    f.write('Write-Host "Script path: ' + file_path.replace('\\', '\\\\') + '"\n')
-                    f.write('Write-Host ""\n')
-                    
-                    # Try Git Bash first
-                    f.write('$gitBashPath = "C:\\Program Files\\Git\\bin\\bash.exe"\n')
-                    f.write('if (Test-Path $gitBashPath) {\n')
-                    f.write('    Write-Host "Using Git Bash..."\n')
-                    f.write('    $scriptDir = Split-Path -Parent "' + file_path.replace('\\', '\\\\') + '"\n')
-                    f.write('    $scriptName = Split-Path -Leaf "' + file_path.replace('\\', '\\\\') + '"\n')
-                    f.write('    Set-Location $scriptDir\n')
-                    f.write('    & $gitBashPath -c "chmod +x ./$scriptName && ./$scriptName"\n')
-                    f.write('} else {\n')
-                    # Then try WSL
-                    f.write('    Write-Host "Using WSL..."\n')
-                    f.write('    $scriptDir = Split-Path -Parent "' + file_path.replace('\\', '\\\\') + '"\n')
-                    f.write('    $scriptName = Split-Path -Leaf "' + file_path.replace('\\', '\\\\') + '"\n')
-                    f.write('    Set-Location $scriptDir\n')
-                    f.write('    wsl bash -c "chmod +x ./$scriptName && ./$scriptName"\n')
-                    f.write('}\n')
-                    f.write('Write-Host ""\n')
-                    f.write('Write-Host "Script execution completed."\n')
-                    f.write('Write-Host "Press Enter to continue..."\n')
-                    f.write('$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")\n')
-                
-                subprocess.Popen(['powershell', '-ExecutionPolicy', 'Bypass', '-File', temp_ps1],
-                               creationflags=subprocess.CREATE_NEW_CONSOLE)
-                
-                def delete_temp_ps1():
-                    time.sleep(5)
-                    try:
-                        os.remove(temp_ps1)
-                    except:
-                        pass
-                
-                create_thread(target=delete_temp_ps1).start()
-                return
-            else:  # Linux
+                # Fall through to default handler
+            
+        # Handle other script types
+        elif file_extension in ['.sh', '.bash']:
+            if platform.system() == 'Windows':
+                # For Windows, use Git Bash if available
+                git_bash_path = r"C:\Program Files\Git\bin\bash.exe"
+                if os.path.exists(git_bash_path):
+                    subprocess.Popen([git_bash_path, file_path])
+                else:
+                    st.error("Git Bash not found. Please install Git for Windows to run .sh files.")
+                    return False
+            else:
+                # For Unix-like systems, make the script executable and run it
                 os.chmod(file_path, 0o755)
-                try:
-                    subprocess.Popen(['xterm', '-e', f'cd "{os.path.dirname(file_path)}" && ./{os.path.basename(file_path)} && echo "Press Enter to close..." && read'])
-                except:
-                    try:
-                        subprocess.Popen(['gnome-terminal', '--', 'bash', '-c', f'cd "{os.path.dirname(file_path)}" && ./{os.path.basename(file_path)} && echo "Press Enter to close..." && read'])
-                    except:
-                        logger.error("Could not find a suitable terminal emulator to run the script.")
-                return
-        
-        # Handle other file types
-        if platform.system() == 'Darwin':  # macOS
-            subprocess.run(['open', file_path])
-        elif platform.system() == 'Windows':
-            os.startfile(file_path)
-        else:  # Linux
-            subprocess.run(['xdg-open', file_path])
+                subprocess.Popen(['bash', file_path])
+            return True
+            
+        elif file_extension in ['.bat', '.cmd']:
+            if platform.system() == 'Windows':
+                subprocess.Popen(['cmd', '/c', 'start', file_path], shell=True)
+            else:
+                st.error("Batch files can only be run on Windows.")
+                return False
+            return True
+            
+        elif file_extension == '.ps1':
+            if platform.system() == 'Windows':
+                subprocess.Popen(['powershell', '-ExecutionPolicy', 'Bypass', '-File', file_path])
+            else:
+                st.error("PowerShell scripts can only be run on Windows.")
+                return False
+            return True
+            
+        elif file_extension == '.vbs':
+            if platform.system() == 'Windows':
+                subprocess.Popen(['cscript', file_path])
+            else:
+                st.error("VBScript files can only be run on Windows.")
+                return False
+            return True
+            
+        # For all other files, use the default system handler
+        else:
+            if platform.system() == 'Windows':
+                os.startfile(file_path)
+            elif platform.system() == 'Darwin':  # macOS
+                subprocess.Popen(['open', file_path])
+            else:  # Linux
+                subprocess.Popen(['xdg-open', file_path])
+            return True
             
     except Exception as e:
         st.error(f"Error opening file: {str(e)}")
+        return False
 
 def get_file_mime_type(file_path):
     """Get the MIME type of a file, with platform-specific handling."""
