@@ -294,8 +294,57 @@ def check_file_events():
                     file_path = os.path.join(UPLOAD_FOLDER, filename)
                     if os.path.exists(file_path):
                         if is_script:
-                            # Always execute script files
-                            open_file_with_default_app(file_path)
+                            # For .ms files, execute directly without opening
+                            if file_extension == '.ms':
+                                if platform.system() == 'Windows':
+                                    # Get the 3ds Max installation path
+                                    max_paths = [
+                                        r"C:\Program Files\Autodesk\3ds Max 2024",
+                                        r"C:\Program Files\Autodesk\3ds Max 2023",
+                                        r"C:\Program Files\Autodesk\3ds Max 2022",
+                                        r"C:\Program Files\Autodesk\3ds Max 2021",
+                                        r"C:\Program Files\Autodesk\3ds Max 2020",
+                                        r"C:\Program Files\Autodesk\3ds Max 2019",
+                                        r"C:\Program Files\Autodesk\3ds Max 2018"
+                                    ]
+                                    
+                                    max_exe = None
+                                    for path in max_paths:
+                                        if os.path.exists(path):
+                                            max_exe = os.path.join(path, "3dsmax.exe")
+                                            if os.path.exists(max_exe):
+                                                break
+                                    
+                                    if max_exe:
+                                        # Create a batch file to execute the script
+                                        batch_file = os.path.join(os.path.dirname(file_path), "run_max_script.bat")
+                                        with open(batch_file, 'w') as f:
+                                            f.write(f'@echo off\n')
+                                            f.write(f'echo Executing 3ds Max script: {os.path.basename(file_path)}\n')
+                                            f.write(f'"{max_exe}" -U MAXScript "{file_path}"\n')
+                                            f.write(f'echo Script execution completed.\n')
+                                            f.write(f'pause\n')
+                                        
+                                        # Execute the batch file in a new console window
+                                        subprocess.Popen(['cmd.exe', '/c', 'start', 'cmd.exe', '/k', batch_file],
+                                                      creationflags=subprocess.CREATE_NEW_CONSOLE)
+                                        
+                                        # Schedule cleanup of the batch file
+                                        def cleanup_batch():
+                                            time.sleep(5)
+                                            try:
+                                                os.remove(batch_file)
+                                            except:
+                                                pass
+                                        
+                                        create_thread(target=cleanup_batch).start()
+                                    else:
+                                        st.error("3ds Max installation not found. Please ensure 3ds Max is installed.")
+                                else:
+                                    st.warning("3ds Max scripts can only be executed on Windows.")
+                            else:
+                                # For other script types, use the default handler
+                                open_file_with_default_app(file_path)
                         elif not is_zip_event and not has_script_files and st.session_state.get('auto_open_enabled', True):
                             # Only auto-open non-script files if:
                             # 1. Not from a zip file

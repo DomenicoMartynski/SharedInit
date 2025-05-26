@@ -1,4 +1,5 @@
 .venv 
+.streamlit
 shared_files/*
 received_files/*
 downloads/*
