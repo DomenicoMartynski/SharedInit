@@ -212,7 +212,7 @@ def load_config():
         except:
             pass
     # Return default configuration
-    return {"download_folder": DEFAULT_UPLOAD_FOLDER}
+    return {"download_folder": DEFAULT_UPLOAD_FOLDER, "max_path": ""}
 
 # Initialize session state
 if 'active_connections' not in st.session_state:
@@ -238,6 +238,9 @@ if 'last_event_check' not in st.session_state:
 if 'download_folder' not in st.session_state:
     config = load_config()
     st.session_state.download_folder = config.get("download_folder", DEFAULT_UPLOAD_FOLDER)
+if 'max_path' not in st.session_state:
+    config = load_config()
+    st.session_state.max_path = config.get("max_path", "")
 
 # Update UPLOAD_FOLDER to use the configured folder
 UPLOAD_FOLDER = st.session_state.download_folder
