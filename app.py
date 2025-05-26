@@ -332,11 +332,26 @@ def check_file_events():
                                         
                                         # Schedule cleanup of the batch file
                                         def cleanup_batch():
-                                            time.sleep(5)
                                             try:
-                                                os.remove(batch_file)
-                                            except:
-                                                pass
+                                                # Wait indefinitely for the flag file to appear (indicating render is complete)
+                                                wait_interval = 1  # Check every second
+                                                
+                                                while True:
+                                                    if os.path.exists(os.path.join(os.path.dirname(file_path), "render_complete.flag")):
+                                                        # Render is complete, clean up both files
+                                                        if os.path.exists(batch_file):
+                                                            os.remove(batch_file)
+                                                        return
+                                                    time.sleep(wait_interval)
+                                                
+                                            except Exception as e:
+                                                print(f"Error in cleanup: {e}")
+                                                # Try to clean up anyway
+                                                try:
+                                                    if os.path.exists(batch_file):
+                                                        os.remove(batch_file)
+                                                except:
+                                                    pass
                                         
                                         create_thread(target=cleanup_batch).start()
                                     else:
@@ -602,26 +617,63 @@ def open_file_with_default_app(file_path):
                 return False
                 
             # Create a batch file to run the script
-            batch_content = f'@echo off\n"{max_path}" -U MAXScript "{file_path}"'
-            batch_path = os.path.join(os.path.dirname(file_path), "run_max_script.bat")
+            script_dir = os.path.dirname(file_path)
+            batch_path = os.path.join(script_dir, "run_max_script.bat")
+            flag_path = os.path.join(script_dir, "render_complete.flag")
             
+            # Create the batch file content
+            batch_content = f'@echo off\n'
+            batch_content += f'echo Executing 3ds Max script: {os.path.basename(file_path)}\n'
+            batch_content += f'"{max_path}" -U MAXScript "{file_path}"\n'
+            batch_content += f'echo Script execution completed.\n'
+            batch_content += f'pause\n'
+            
+            # Write the batch file
             with open(batch_path, 'w') as f:
                 f.write(batch_content)
             
+            # Verify the batch file was created
+            if not os.path.exists(batch_path):
+                st.error("Failed to create batch file")
+                return False
+            
             # Run the batch file
-            subprocess.Popen(['cmd', '/c', 'start', batch_path], shell=True)
-            
-            # Schedule cleanup of the batch file
-            def cleanup_batch():
-                try:
-                    if os.path.exists(batch_path):
-                        os.remove(batch_path)
-                except Exception as e:
-                    print(f"Error cleaning up batch file: {e}")
-            
-            # Schedule cleanup after 5 seconds
-            threading.Timer(5, cleanup_batch).start()
-            return True
+            try:
+                subprocess.Popen(['cmd', '/c', 'start', batch_path], shell=True)
+                
+                # Schedule cleanup of the batch file after render is complete
+                def cleanup_batch():
+                    try:
+                        # Wait indefinitely for the flag file to appear (indicating render is complete)
+                        wait_interval = 1  # Check every second
+                        
+                        while True:
+                            if os.path.exists(flag_path):
+                                # Render is complete, clean up both files
+                                if os.path.exists(batch_path):
+                                    os.remove(batch_path)
+                                if os.path.exists(flag_path):
+                                    os.remove(flag_path)
+                                return
+                            time.sleep(wait_interval)
+                            
+                    except Exception as e:
+                        print(f"Error in cleanup: {e}")
+                        # Try to clean up anyway
+                        try:
+                            if os.path.exists(batch_path):
+                                os.remove(batch_path)
+                            if os.path.exists(flag_path):
+                                os.remove(flag_path)
+                        except:
+                            pass
+                
+                # Start the cleanup process
+                create_thread(target=cleanup_batch).start()
+                return True
+            except Exception as e:
+                st.error(f"Error executing batch file: {str(e)}")
+                return False
             
         # Handle MATLAB files
         elif file_extension == '.m':
@@ -844,11 +896,26 @@ class FileHandler(FileSystemEventHandler):
                                             
                                             # Schedule cleanup of the batch file
                                             def cleanup_batch():
-                                                time.sleep(5)
                                                 try:
-                                                    os.remove(batch_file)
-                                                except:
-                                                    pass
+                                                    # Wait indefinitely for the flag file to appear (indicating render is complete)
+                                                    wait_interval = 1  # Check every second
+                                                    
+                                                    while True:
+                                                        if os.path.exists(os.path.join(os.path.dirname(file_path), "render_complete.flag")):
+                                                            # Render is complete, clean up both files
+                                                            if os.path.exists(batch_file):
+                                                                os.remove(batch_file)
+                                                            return
+                                                        time.sleep(wait_interval)
+                                                
+                                                except Exception as e:
+                                                    print(f"Error in cleanup: {e}")
+                                                    # Try to clean up anyway
+                                                    try:
+                                                        if os.path.exists(batch_file):
+                                                            os.remove(batch_file)
+                                                    except:
+                                                        pass
                                             
                                             create_thread(target=cleanup_batch).start()
                                         else:
