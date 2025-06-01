@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # Constants
 CONFIG_FILE = "app_config.json"
-MAX_FILE_SIZE = 200 * 1024 * 1024  # 200MB max file size
+MAX_FILE_SIZE = 201 * 1024 * 1024  # 201MB max file size
 PORT = 8502  # Different port from Streamlit
 EVENT_FILE = "file_events.json"  # File to store events for Streamlit to read
 STREAMLIT_PORT = 8501  # Port for Streamlit app
