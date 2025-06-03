@@ -127,6 +127,20 @@ class TestPerformance(unittest.TestCase):
             pass
         return None
 
+    def wait_for_file_transfer(self, device_ip, filename, timeout=30):
+        """Wait for file to appear on the receiving device."""
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            try:
+                # Check if file exists on the receiving device
+                response = requests.get(f"http://{device_ip}:8502/check_file/{filename}")
+                if response.status_code == 200:
+                    return True
+            except:
+                pass
+            time.sleep(0.1)
+        return False
+
     def run_test_iterations(self, test_func, *args, **kwargs):
         """Run a test function multiple times and collect statistics."""
         times = []
@@ -139,8 +153,8 @@ class TestPerformance(unittest.TestCase):
                 end_time = time.time()
                 times.append(end_time - start_time)
                 successes += 1
-                #if (i + 1) % 10 == 0:  # Progress update every 10 iterations
-                    #print(f"Completed {i + 1}/{self.iterations} iterations")
+                if (i + 1) % 10 == 0:  # Progress update every 10 iterations
+                    print(f"Completed {i + 1}/{self.iterations} iterations")
             except Exception as e:
                 print(f"Iteration {i + 1} failed: {str(e)}")
                 continue
@@ -165,7 +179,10 @@ class TestPerformance(unittest.TestCase):
                 if self.real_devices:
                     device = self.real_devices[0]
                     for i in range(num_files):
-                        send_file_to_device(self.test_files[f'test_multiple_{i+1}.bin'], device['ip'])
+                        filename = f'test_multiple_{i+1}.bin'
+                        send_file_to_device(self.test_files[filename], device['ip'])
+                        if not self.wait_for_file_transfer(device['ip'], filename):
+                            raise Exception(f"File {filename} not received on device {device['ip']}")
                 else:
                     with patch('requests.post', side_effect=lambda *args, **kwargs: time.sleep(0.1)) as mock_post:
                         for i in range(num_files):
@@ -195,7 +212,12 @@ class TestPerformance(unittest.TestCase):
                         selected_devices = self.real_devices[:num_devices]
                         selected_ips = [device['ip'] for device in selected_devices]
                         for i in range(num_files):
-                            send_file_to_selected_devices(self.test_files[f'test_multiple_{i+1}.bin'], selected_ips)
+                            filename = f'test_multiple_{i+1}.bin'
+                            send_file_to_selected_devices(self.test_files[filename], selected_ips)
+                            # Wait for file to be received on all devices
+                            for ip in selected_ips:
+                                if not self.wait_for_file_transfer(ip, filename):
+                                    raise Exception(f"File {filename} not received on device {ip}")
                     else:
                         with patch('requests.post', side_effect=lambda *args, **kwargs: time.sleep(0.1)) as mock_post:
                             selected_devices = self.real_devices[:num_devices]
@@ -224,7 +246,10 @@ class TestPerformance(unittest.TestCase):
             def transfer_file():
                 if self.real_devices:
                     device = self.real_devices[0]
-                    send_file_to_device(self.test_files[f'test_{size}MB.bin'], device['ip'])
+                    filename = f'test_{size}MB.bin'
+                    send_file_to_device(self.test_files[filename], device['ip'])
+                    if not self.wait_for_file_transfer(device['ip'], filename):
+                        raise Exception(f"File {filename} not received on device {device['ip']}")
                 else:
                     with patch('requests.post', side_effect=lambda *args, **kwargs: time.sleep(0.1)) as mock_post:
                         send_file_to_device(self.test_files[f'test_{size}MB.bin'], self.real_devices[0]['ip'])
@@ -248,7 +273,10 @@ class TestPerformance(unittest.TestCase):
             def transfer_file():
                 if self.real_devices:
                     device = self.real_devices[0]
-                    send_file_to_device(self.test_files[f'test_{size}MB.bin'], device['ip'])
+                    filename = f'test_{size}MB.bin'
+                    send_file_to_device(self.test_files[filename], device['ip'])
+                    if not self.wait_for_file_transfer(device['ip'], filename):
+                        raise Exception(f"File {filename} not received on device {device['ip']}")
                 else:
                     with patch('requests.post', side_effect=lambda *args, **kwargs: time.sleep(0.1)) as mock_post:
                         send_file_to_device(self.test_files[f'test_{size}MB.bin'], self.real_devices[0]['ip'])

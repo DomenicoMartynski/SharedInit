@@ -1,5 +1,7 @@
-.venv 
+.venv
+.venv/*
 .streamlit
+.streamlit/*
 shared_files/*
 received_files/*
 downloads/*
