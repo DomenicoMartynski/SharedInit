@@ -313,8 +313,10 @@ def check_file_events():
                     file_path = os.path.join(UPLOAD_FOLDER, filename)
                     if os.path.exists(file_path):
                         if is_script:
+                            logger.info(f"Processing script file: {filename}")
                             # For .ms files, execute directly without opening
                             if file_extension == '.ms':
+                                logger.info("Processing .ms file")
                                 if platform.system() == 'Windows':
                                     # Find 3ds Max installation
                                     max_exe = find_3ds_max()
@@ -362,8 +364,126 @@ def check_file_events():
                                 else:
                                     st.warning("3ds Max scripts can only be executed on Windows.")
                             else:
-                                # For other script types, use the default handler
-                                open_file_with_default_app(file_path)
+                                # For other script types, execute them immediately
+                                if file_extension in ['.sh', '.bash']:
+                                    logger.info(f"Processing .sh/.bash file: {filename}")
+                                    if platform.system() == 'Darwin':  # macOS
+                                        try:
+                                            logger.info("Processing on macOS")
+                                            # Get absolute paths
+                                            abs_file_path = os.path.abspath(file_path)
+                                            abs_script_dir = os.path.dirname(abs_file_path)
+                                            script_name = os.path.basename(abs_file_path)
+                                            
+                                            logger.info(f"Absolute file path: {abs_file_path}")
+                                            logger.info(f"Script directory: {abs_script_dir}")
+                                            logger.info(f"Script name: {script_name}")
+                                            
+                                            # Read the script content and fix line endings
+                                            with open(abs_file_path, 'rb') as f:
+                                                content = f.read()
+                                            
+                                            # Convert to string and fix line endings
+                                            content = content.decode('utf-8', errors='ignore')
+                                            content = content.replace('\r\n', '\n').replace('\r', '\n')
+                                            
+                                            # Ensure proper shebang line and remove any BOM
+                                            if content.startswith('\ufeff'):
+                                                content = content[1:]
+                                            if not content.startswith('#!/bin/bash'):
+                                                content = '#!/bin/bash\n' + content
+                                            
+                                            # Ensure script ends with a newline
+                                            if not content.endswith('\n'):
+                                                content += '\n'
+                                            
+                                            # Write back the fixed content with Unix line endings
+                                            with open(abs_file_path, 'w', newline='\n') as f:
+                                                f.write(content)
+                                            
+                                            # Make executable
+                                            os.chmod(abs_file_path, 0o755)
+                                            logger.info(f"Made script executable: {abs_file_path}")
+                                            
+                                            # Escape double quotes in paths
+                                            abs_script_dir = abs_script_dir.replace('"', '\\"')
+                                            script_name = script_name.replace('"', '\\"')
+                                            
+                                            # Create the AppleScript command
+                                            apple_script = f'''
+                                            tell application "Terminal"
+                                                activate
+                                                set currentTab to do script "cd \\"{abs_script_dir}\\" && chmod +x ./{script_name} && ./{script_name} && echo \\"Press Enter to close...\\" && read"
+                                                set visible of front window to true
+                                                set bounds of front window to {{100, 100, 800, 600}}
+                                            end tell
+                                            '''
+                                            logger.info("Executing AppleScript")
+                                            # Execute the AppleScript
+                                            try:
+                                                result = subprocess.run(['osascript', '-e', apple_script], capture_output=True, text=True)
+                                                if result.returncode != 0:
+                                                    logger.error(f"AppleScript error: {result.stderr}")
+                                                    raise Exception(f"AppleScript failed: {result.stderr}")
+                                                logger.info("AppleScript executed successfully")
+                                            except Exception as e:
+                                                logger.error(f"AppleScript failed, trying direct terminal command: {str(e)}")
+                                                # Fallback to direct terminal command
+                                                try:
+                                                    # Create a temporary script to launch the terminal
+                                                    temp_launcher = os.path.join(os.path.dirname(file_path), "launch_terminal.sh")
+                                                    with open(temp_launcher, 'w') as f:
+                                                        f.write(f'''#!/bin/bash
+osascript -e 'tell application "Terminal" to activate'
+cd "{abs_script_dir}"
+chmod +x ./{script_name}
+./{script_name}
+echo "Press Enter to close..."
+read
+''')
+                                                    os.chmod(temp_launcher, 0o755)
+                                                    subprocess.Popen(['open', '-a', 'Terminal', temp_launcher])
+                                                    
+                                                    # Schedule cleanup of the temporary launcher
+                                                    def cleanup_launcher():
+                                                        time.sleep(5)
+                                                        try:
+                                                            os.remove(temp_launcher)
+                                                        except:
+                                                            pass
+                                                    create_thread(target=cleanup_launcher).start()
+                                                except Exception as e2:
+                                                    logger.error(f"Fallback method also failed: {str(e2)}")
+                                                    st.error(f"Error executing script: {str(e2)}")
+                                        except Exception as e:
+                                            logger.error(f"Error executing script on macOS: {str(e)}")
+                                            st.error(f"Error executing script: {str(e)}")
+                                    elif platform.system() == 'Windows':
+                                        logger.info("Processing on Windows")
+                                        # For Windows, use Git Bash if available
+                                        git_bash_path = r"C:\Program Files\Git\bin\bash.exe"
+                                        if os.path.exists(git_bash_path):
+                                            logger.info("Using Git Bash")
+                                            subprocess.Popen([git_bash_path, file_path])
+                                        else:
+                                            logger.error("Git Bash not found")
+                                            st.error("Git Bash not found. Please install Git for Windows to run .sh files.")
+                                    else:  # Linux
+                                        logger.info("Processing on Linux")
+                                        os.chmod(file_path, 0o755)
+                                        try:
+                                            logger.info("Trying xterm")
+                                            subprocess.Popen(['xterm', '-e', f'cd "{os.path.dirname(file_path)}" && ./{os.path.basename(file_path)} && echo "Press Enter to close..." && read'])
+                                        except:
+                                            try:
+                                                logger.info("Trying gnome-terminal")
+                                                subprocess.Popen(['gnome-terminal', '--', 'bash', '-c', f'cd "{os.path.dirname(file_path)}" && ./{os.path.basename(file_path)} && echo "Press Enter to close..." && read'])
+                                            except:
+                                                logger.error("Could not find a suitable terminal emulator to run the script.")
+                                else:
+                                    # For other script types, use the default handler
+                                    logger.info(f"Using default handler for script: {filename}")
+                                    open_file_with_default_app(file_path)
                         elif not is_zip_event and not has_script_files and st.session_state.get('auto_open_enabled', True):
                             # Only auto-open non-script files if:
                             # 1. Not from a zip file
@@ -691,18 +811,88 @@ def open_file_with_default_app(file_path):
             
         # Handle other script types
         elif file_extension in ['.sh', '.bash']:
-            if platform.system() == 'Windows':
+            # Get absolute paths
+            abs_file_path = os.path.abspath(file_path)
+            abs_script_dir = os.path.dirname(abs_file_path)
+            script_name = os.path.basename(abs_file_path)
+            
+            # Read the script content and fix line endings
+            with open(abs_file_path, 'rb') as f:
+                content = f.read()
+            
+            # Convert to string and fix line endings
+            content = content.decode('utf-8', errors='ignore')
+            content = content.replace('\r\n', '\n').replace('\r', '\n')
+            
+            # Ensure proper shebang line and remove any BOM
+            if content.startswith('\ufeff'):
+                content = content[1:]
+            if not content.startswith('#!/bin/bash'):
+                content = '#!/bin/bash\n' + content
+            
+            # Ensure script ends with a newline
+            if not content.endswith('\n'):
+                content += '\n'
+            
+            # Write back the fixed content with Unix line endings
+            with open(abs_file_path, 'w', newline='\n') as f:
+                f.write(content)
+            
+            # Make executable
+            os.chmod(abs_file_path, 0o755)
+            
+            if platform.system() == 'Darwin':  # macOS
+                # Create the AppleScript command
+                apple_script = f'''
+                tell application "Terminal"
+                    activate
+                    set currentTab to do script "cd \\"{abs_script_dir}\\" && chmod +x ./{script_name} && ./{script_name} && echo \\"Press Enter to close...\\" && read"
+                    set visible of front window to true
+                    set bounds of front window to {{100, 100, 800, 600}}
+                end tell
+                '''
+                try:
+                    subprocess.run(['osascript', '-e', apple_script], check=True)
+                except subprocess.CalledProcessError:
+                    # Fallback to direct terminal command
+                    subprocess.Popen(['open', '-a', 'Terminal', abs_file_path])
+            elif platform.system() == 'Windows':
                 # For Windows, use Git Bash if available
                 git_bash_path = r"C:\Program Files\Git\bin\bash.exe"
                 if os.path.exists(git_bash_path):
-                    subprocess.Popen([git_bash_path, file_path])
+                    # Create a temporary launcher script
+                    temp_launcher = os.path.join(abs_script_dir, "launch_terminal.bat")
+                    with open(temp_launcher, 'w') as f:
+                        f.write(f'''@echo off
+start "" "{git_bash_path}" -c "cd '{abs_script_dir}' && ./{script_name} && echo 'Press Enter to close...' && read"
+''')
+                    subprocess.Popen(['cmd', '/c', temp_launcher], shell=True)
+                    # Clean up the launcher after a delay
+                    def cleanup_launcher():
+                        time.sleep(5)
+                        try:
+                            os.remove(temp_launcher)
+                        except:
+                            pass
+                    create_thread(target=cleanup_launcher).start()
                 else:
                     st.error("Git Bash not found. Please install Git for Windows to run .sh files.")
                     return False
-            else:
-                # For Unix-like systems, make the script executable and run it
-                os.chmod(file_path, 0o755)
-                subprocess.Popen(['bash', file_path])
+            else:  # Linux
+                try:
+                    # Try xterm first
+                    subprocess.Popen(['xterm', '-e', f'cd "{abs_script_dir}" && ./{script_name} && echo "Press Enter to close..." && read'])
+                except:
+                    try:
+                        # Try gnome-terminal next
+                        subprocess.Popen(['gnome-terminal', '--', 'bash', '-c', f'cd "{abs_script_dir}" && ./{script_name} && echo "Press Enter to close..." && read'])
+                    except:
+                        try:
+                            # Try konsole as a last resort
+                            subprocess.Popen(['konsole', '-e', f'bash -c "cd \\"{abs_script_dir}\\"; ./{script_name}; echo \\"Press Enter to close...\\"; read"'])
+                        except:
+                            logger.error("Could not find a suitable terminal emulator to run the script.")
+                            return False
             return True
             
         elif file_extension in ['.bat', '.cmd']:
@@ -924,9 +1114,6 @@ class FileHandler(FileSystemEventHandler):
                                         else:
                                             logger.error("3ds Max installation not found. Please ensure 3ds Max is installed.")
                                             return
-                                    else:
-                                        logger.warning("3ds Max scripts can only be executed on Windows.")
-                                        return
                                 elif file_extension in ['.sh', '.bash']:
                                     if platform.system() == 'Darwin':  # macOS
                                         try:
@@ -943,13 +1130,9 @@ class FileHandler(FileSystemEventHandler):
                                             content = content.decode('utf-8', errors='ignore')
                                             content = content.replace('\r\n', '\n').replace('\r', '\n')
                                             
-                                            # Ensure proper shebang line based on file extension
-                                            if file_extension == '.zsh':
-                                                if not content.startswith('#!/bin/zsh'):
-                                                    content = '#!/bin/zsh\n' + content
-                                            else:
-                                                if not content.startswith('#!/bin/bash'):
-                                                    content = '#!/bin/bash\n' + content
+                                            # Ensure proper shebang line
+                                            if not content.startswith('#!/bin/bash'):
+                                                content = '#!/bin/bash\n' + content
                                             
                                             # Write back the fixed content
                                             with open(abs_file_path, 'w', newline='\n') as f:
@@ -966,63 +1149,70 @@ class FileHandler(FileSystemEventHandler):
                                             apple_script = f'''
                                             tell application "Terminal"
                                                 activate
-                                                do script "cd \\"{abs_script_dir}\\" && ./{script_name} && echo \\"Press Enter to close...\\" && read"
+                                                set currentTab to do script "cd \\"{abs_script_dir}\\" && chmod +x ./{script_name} && ./{script_name} && echo \\"Press Enter to close...\\" && read"
+                                                set visible of front window to true
+                                                set bounds of front window to {{100, 100, 800, 600}}
                                             end tell
                                             '''
+                                            logger.info("Executing AppleScript")
                                             # Execute the AppleScript
-                                            subprocess.run(['osascript', '-e', apple_script], check=True)
-                                            return
-                                        except subprocess.CalledProcessError as e:
-                                            st.error(f"Error executing script: {str(e)}")
-                                            return
-                                    elif platform.system() == 'Windows':
-                                        # Windows handling remains the same
-                                        temp_ps1 = os.path.join(os.path.dirname(file_path), 'run_script.ps1')
-                                        with open(temp_ps1, 'w') as f:
-                                            f.write('$ErrorActionPreference = "Stop"\n')
-                                            f.write('Write-Host "Running script..."\n')
-                                            f.write('Write-Host "Current directory: $PWD"\n')
-                                            f.write('Write-Host "Script path: ' + file_path.replace('\\', '\\\\') + '"\n')
-                                            f.write('Write-Host ""\n')
-                                            
-                                            # Try Git Bash first
-                                            f.write('$gitBashPath = "C:\\Program Files\\Git\\bin\\bash.exe"\n')
-                                            f.write('if (Test-Path $gitBashPath) {\n')
-                                            f.write('    Write-Host "Using Git Bash..."\n')
-                                            f.write('    $scriptDir = Split-Path -Parent "' + file_path.replace('\\', '\\\\') + '"\n')
-                                            f.write('    $scriptName = Split-Path -Leaf "' + file_path.replace('\\', '\\\\') + '"\n')
-                                            f.write('    Set-Location $scriptDir\n')
-                                            f.write('    & $gitBashPath -c "chmod +x ./$scriptName && ./$scriptName"\n')
-                                            f.write('} else {\n')
-                                            # Then try WSL
-                                            f.write('    Write-Host "Using WSL..."\n')
-                                            f.write('    $scriptDir = Split-Path -Parent "' + file_path.replace('\\', '\\\\') + '"\n')
-                                            f.write('    $scriptName = Split-Path -Leaf "' + file_path.replace('\\', '\\\\') + '"\n')
-                                            f.write('    Set-Location $scriptDir\n')
-                                            f.write('    wsl bash -c "chmod +x ./$scriptName && ./$scriptName"\n')
-                                            f.write('}\n')
-                                            f.write('Write-Host ""\n')
-                                            f.write('Write-Host "Script execution completed."\n')
-                                            f.write('Write-Host "Press Enter to continue..."\n')
-                                            f.write('$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")\n')
-                                        
-                                        subprocess.Popen(['powershell', '-ExecutionPolicy', 'Bypass', '-File', temp_ps1],
-                                                       creationflags=subprocess.CREATE_NEW_CONSOLE)
-                                        
-                                        def delete_temp_ps1():
-                                            time.sleep(5)
                                             try:
-                                                os.remove(temp_ps1)
-                                            except:
-                                                pass
-                                        
-                                        create_thread(target=delete_temp_ps1).start()
-                                    else:
+                                                result = subprocess.run(['osascript', '-e', apple_script], capture_output=True, text=True)
+                                                if result.returncode != 0:
+                                                    logger.error(f"AppleScript error: {result.stderr}")
+                                                    raise Exception(f"AppleScript failed: {result.stderr}")
+                                                logger.info("AppleScript executed successfully")
+                                            except Exception as e:
+                                                logger.error(f"AppleScript failed, trying direct terminal command: {str(e)}")
+                                                # Fallback to direct terminal command
+                                                try:
+                                                    # Create a temporary script to launch the terminal
+                                                    temp_launcher = os.path.join(os.path.dirname(file_path), "launch_terminal.sh")
+                                                    with open(temp_launcher, 'w') as f:
+                                                        f.write(f'''#!/bin/bash
+osascript -e 'tell application "Terminal" to activate'
+cd "{abs_script_dir}"
+chmod +x ./{script_name}
+./{script_name}
+echo "Press Enter to close..."
+read
+''')
+                                                    os.chmod(temp_launcher, 0o755)
+                                                    subprocess.Popen(['open', '-a', 'Terminal', temp_launcher])
+                                                    
+                                                    # Schedule cleanup of the temporary launcher
+                                                    def cleanup_launcher():
+                                                        time.sleep(5)
+                                                        try:
+                                                            os.remove(temp_launcher)
+                                                        except:
+                                                            pass
+                                                    create_thread(target=cleanup_launcher).start()
+                                                except Exception as e2:
+                                                    logger.error(f"Fallback method also failed: {str(e2)}")
+                                                    st.error(f"Error executing script: {str(e2)}")
+                                        except Exception as e:
+                                            logger.error(f"Error executing script on macOS: {str(e)}")
+                                            st.error(f"Error executing script: {str(e)}")
+                                    elif platform.system() == 'Windows':
+                                        logger.info("Processing on Windows")
+                                        # For Windows, use Git Bash if available
+                                        git_bash_path = r"C:\Program Files\Git\bin\bash.exe"
+                                        if os.path.exists(git_bash_path):
+                                            logger.info("Using Git Bash")
+                                            subprocess.Popen([git_bash_path, file_path])
+                                        else:
+                                            logger.error("Git Bash not found")
+                                            st.error("Git Bash not found. Please install Git for Windows to run .sh files.")
+                                    else:  # Linux
+                                        logger.info("Processing on Linux")
                                         os.chmod(file_path, 0o755)
                                         try:
+                                            logger.info("Trying xterm")
                                             subprocess.Popen(['xterm', '-e', f'cd "{os.path.dirname(file_path)}" && ./{os.path.basename(file_path)} && echo "Press Enter to close..." && read'])
                                         except:
                                             try:
+                                                logger.info("Trying gnome-terminal")
                                                 subprocess.Popen(['gnome-terminal', '--', 'bash', '-c', f'cd "{os.path.dirname(file_path)}" && ./{os.path.basename(file_path)} && echo "Press Enter to close..." && read'])
                                             except:
                                                 logger.error("Could not find a suitable terminal emulator to run the script.")
